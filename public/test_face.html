@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chernoff Face Test Harness</title>
+    <style>
+      body {
+        background-color: #0b1120;
+        color: #d1d5db;
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 2rem;
+      }
+      h1 {
+        margin-bottom: 2rem;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: 100px 1fr 50px;
+        gap: 1rem;
+        width: 100%;
+        max-width: 500px;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 2rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+      }
+      label {
+        text-align: right;
+        align-self: center;
+      }
+      input[type="range"] {
+        width: 100%;
+        cursor: pointer;
+      }
+      .val-display {
+        font-family: monospace;
+        align-self: center;
+      }
+
+      #face-container {
+        width: 300px;
+        height: 300px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: rgba(0, 0, 0, 0.2);
+      }
+      svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Chernoff Face Renderer Test</h1>
+
+    <div class="controls">
+      <label>Mouth (Err)</label>
+      <input type="range" id="mouth" min="0" max="1" step="0.01" value="1" />
+      <span id="val-mouth" class="val-display">1.00</span>
+
+      <label>Eye (Lat)</label>
+      <input type="range" id="eyeSize" min="0" max="1" step="0.01" value="0" />
+      <span id="val-eyeSize" class="val-display">0.00</span>
+
+      <label>Brow (Load)</label>
+      <input
+        type="range"
+        id="browAngle"
+        min="0"
+        max="1"
+        step="0.01"
+        value="1"
+      />
+      <span id="val-browAngle" class="val-display">1.00</span>
+
+      <label>Health</label>
+      <input type="range" id="health" min="0" max="1" step="0.01" value="1" />
+      <span id="val-health" class="val-display">1.00</span>
+    </div>
+
+    <div id="face-container"></div>
+
+    <script type="module">
+      import { renderFace } from "./face.js";
+
+      const inputs = ["mouth", "eyeSize", "browAngle", "health"];
+      const update = () => {
+        const params = {};
+        inputs.forEach((id) => {
+          const val = parseFloat(document.getElementById(id).value);
+          params[id] = val;
+          document.getElementById(`val-${id}`).textContent = val.toFixed(2);
+        });
+        document.getElementById("face-container").innerHTML =
+          renderFace(params);
+      };
+
+      inputs.forEach((id) => {
+        document.getElementById(id).addEventListener("input", update);
+      });
+
+      // Initial render
+      update();
+    </script>
+  </body>
+</html>

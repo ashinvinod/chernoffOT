@@ -1,0 +1,294 @@
+:root {
+    --bg-white: #f8f8f8;
+    --text-black: #111;
+    --comic-red: #ff3b3b;
+    --comic-green: #2ecc71;
+    --comic-yellow: #f1c40f;
+    --comic-blue: #3498db;
+    
+    --font-heading: 'Bangers', sans-serif;
+    --font-body: 'Comic Neue', cursive, sans-serif;
+}
+
+body {
+    background-color: var(--bg-white);
+    background-image: radial-gradient(#ddd 1px, transparent 1px);
+    background-size: 20px 20px;
+    color: var(--text-black);
+    font-family: var(--font-body);
+    font-weight: 700;
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    text-transform: uppercase;
+}
+
+#app {
+    max-width: 100%; /* Use full width */
+    margin: 0;
+    padding: 1rem;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+/* Header */
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border-bottom: 4px solid var(--text-black);
+}
+
+header h1 {
+    font-family: var(--font-heading);
+    font-size: 2rem;
+    margin: 0;
+    letter-spacing: 1px;
+    text-shadow: 2px 2px 0 var(--comic-yellow);
+}
+
+.meta {
+    font-family: var(--font-body);
+    font-size: 0.8rem;
+    background: var(--text-black);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+/* Grid: TIGHT PACKING */
+#grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem; /* Space between faces */
+    flex: 1;
+    justify-content: center; /* Center items, including last row */
+    align-content: flex-start;
+}
+
+.loading {
+    grid-column: 1 / -1;
+    text-align: center;
+    font-family: var(--font-heading);
+    font-size: 2rem;
+    padding: 4rem;
+}
+
+/* Card: Transparent, no box */
+.card {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: transform 0.2s;
+    cursor: pointer;
+    overflow: visible; /* Let faces pop */
+    width: 140px; /* Fixed width for consistent flex layout */
+    position: relative; /* Anchor for chat bubble */
+}
+
+.card:hover {
+    transform: scale(1.1);
+    z-index: 10;
+}
+
+/* Face */
+.face {
+    width: 100px;
+    height: 100px;
+    margin-bottom: 0.5rem;
+    /* Remove background, just the SVG face */
+    background: transparent;
+}
+
+.face svg {
+    width: 100%;
+    height: 100%;
+    /* Drop shadow for pop */
+    filter: drop-shadow(3px 3px 0 rgba(0,0,0,0.2));
+}
+
+/* Info: Minimal */
+.info {
+    text-align: center;
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 0;
+    box-shadow: none;
+}
+
+.info h2 {
+    font-family: var(--font-body); /* More readable at small sizes */
+    font-size: 0.9rem;
+    margin: 0;
+    color: var(--text-black);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* background: rgba(255,255,255,0.8); Removed per request */
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+/* Chat Bubble: Comic Style */
+.chat-bubble {
+    position: absolute;
+    bottom: 100%; /* Above the card */
+    left: 50%;
+    transform: translateX(-50%) translateY(10px) rotate(0deg); /* Start slightly lower */
+    background: #fff;
+    border: 3px solid #000;
+    /* Default generic rounded just in case */
+    border-radius: 20px;
+    padding: 15px 20px;
+    width: max-content;
+    max-width: 250px; /* Safety cap */
+    text-align: left;
+    filter: drop-shadow(4px 4px 0 rgba(0,0,0,0.15));
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    font-size: 0.8rem; /* Slightly larger text */
+    font-family: var(--font-body); /* Ensure comic font */
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+/* Base Tail (Triangle) - tweaked per variant */
+.chat-bubble::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    z-index: 101; 
+}
+
+/* Variant 1: Puffy Box (was circle) */
+.bubble-v1 {
+    border-radius: 20px 25px 22px 18px;
+}
+.bubble-v1::after {
+    bottom: -14px; /* Black tail */
+    left: 40%;
+    border-width: 18px 14px 0 2px;
+    border-color: #000 transparent transparent transparent;
+    transform: rotate(5deg);
+}
+.bubble-v1::before {
+    content: ''; position: absolute; 
+    bottom: -6px; /* Moved UP to cover border */
+    left: 41%;
+    border-width: 15px 10px 0 2px;
+    border-color: #fff transparent transparent transparent;
+    transform: rotate(5deg); 
+    z-index: 102;
+}
+
+/* Variant 2: Squarish Comic (kept similar but looser) */
+.bubble-v2 {
+    border-radius: 15px 255px 15px 25px / 25px 15px 25px 15px;
+}
+.bubble-v2::after {
+    bottom: -15px;
+    right: 30%;
+    border-width: 18px 5px 0 18px;
+    border-color: #000 transparent transparent transparent;
+    transform: rotate(-5deg);
+}
+.bubble-v2::before {
+    content: ''; position: absolute; 
+    bottom: -7px; /* Deep overlap */
+    right: 30.5%;
+    border-width: 15px 4px 0 15px;
+    border-color: #fff transparent transparent transparent;
+    transform: rotate(-5deg); 
+    z-index: 102;
+}
+
+/* Variant 3: Asymmetric Oval-ish Box (was tight oval) */
+.bubble-v3 {
+    border-radius: 30px 40px 10px 40px / 20px 20px 30px 20px;
+}
+.bubble-v3::after {
+    bottom: -16px;
+    left: 20%;
+    border-width: 20px 16px 0 0;
+    border-color: #000 transparent transparent transparent;
+    transform: skewX(-10deg);
+}
+.bubble-v3::before {
+    content: ''; position: absolute; 
+    bottom: -8px; 
+    left: 21%;
+    border-width: 16px 12px 0 0;
+    border-color: #fff transparent transparent transparent;
+    transform: skewX(-10deg); 
+    z-index: 102;
+}
+
+/* Variant 4: Boxy Asymmetric (Refined) */
+.bubble-v4 {
+    border-radius: 10px 25px 10px 30px;
+}
+.bubble-v4::after {
+    bottom: -15px;
+    left: 55%; 
+    border-width: 18px 10px 0 10px;
+    border-color: #000 transparent transparent transparent;
+    transform: rotate(2deg);
+}
+.bubble-v4::before {
+    content: ''; position: absolute; 
+    bottom: -7px;
+    left: 55.5%;
+    border-width: 15px 7px 0 7px;
+    border-color: #fff transparent transparent transparent; 
+    transform: rotate(2deg);
+    z-index: 102;
+}
+
+.card:hover .chat-bubble {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-15px) rotate(0deg); /* Move up into place */
+    pointer-events: auto;
+    animation: wobble 2s ease-in-out infinite; /* Keep it alive */
+}
+
+@keyframes wobble {
+    0%, 100% { transform: translateX(-50%) translateY(-15px) rotate(-1deg); }
+    50% { transform: translateX(-50%) translateY(-15px) rotate(1deg); }
+}
+
+.chat-bubble div {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.chat-bubble .label {
+    font-weight: 900;
+    color: #666;
+}
+
+/* Footer */
+footer {
+    display: none; /* Save space */
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    #grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    }
+}
