@@ -4,7 +4,8 @@ import { renderFace } from "./face.js";
 let config = { refreshInterval: 15 };
 const physicsState = {
     nodes: new Map(), // Map<ServiceName, Node>
-    bounds: { width: 0, height: 0, centerX: 0, centerY: 0 }
+    bounds: { width: 0, height: 0, centerX: 0, centerY: 0 },
+    zoom: 1
 };
 
 // --- Config ---
@@ -28,6 +29,25 @@ async function init() {
         updateBounds();
         layout();
     });
+
+    // Zoom Interaction
+    const grid = document.getElementById("grid");
+    if (grid) {
+        grid.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            const delta = e.deltaY;
+            const sensitivity = 0.001;
+            
+            // Update Zoom
+            let newZoom = physicsState.zoom - delta * sensitivity;
+            newZoom = Math.max(0.1, Math.min(newZoom, 5)); // Clamp 0.1x to 5x
+            
+            physicsState.zoom = newZoom;
+            
+            // Re-run layout (fewer ticks for responsiveness)
+            layout(30); 
+        }, { passive: false });
+    }
     
     // Start Animation Loop (Removed, now static)
     // requestAnimationFrame(physicsLoop);
@@ -231,13 +251,13 @@ function getTrafficUnrelatedColor() {
  * Runs a static simulation to settle nodes positions 
  * without continuous animation.
  */
-function layout() {
+function layout(ticks = 300) {
     const nodes = Array.from(physicsState.nodes.values());
     if (nodes.length === 0) return;
 
     const { centerX, centerY } = physicsState.bounds;
-    const TICKS = 300;
-    const MIN_DIST = 200; // Increased spacing (was 160)
+    const TICKS = ticks;
+    const MIN_DIST = 200 * physicsState.zoom; // Scale spacing with zoom
     
     // Simulation Loop (Synchronous)
     for (let i = 0; i < TICKS; i++) {
@@ -250,7 +270,8 @@ function layout() {
             
             // Stronger pull initially, weaker later
             const k = FORCE_CENTER * alpha;
-            node.vx += dx * k;
+            // Spread horizontally: weaker pull on X axis to use full width
+            node.vx += dx * k * 0.4;
             node.vy += dy * k;
 
             // 2. Repulsion
@@ -297,9 +318,14 @@ function layout() {
             node.x += node.vx;
             node.y += node.vy;
             
-            // Keep roughly in bounds (optional, but good for safety)
-            // if (node.x < 0) node.x = 0;
-            // if (node.x > physicsState.bounds.width) node.x = physicsState.bounds.width;
+            // Keep in bounds (with margin for card size ~120px width)
+            const marginX = 70; 
+            const marginY = 100;
+            
+            if (node.x < marginX) { node.x = marginX; node.vx *= -0.5; }
+            if (node.x > physicsState.bounds.width - marginX) { node.x = physicsState.bounds.width - marginX; node.vx *= -0.5; }
+            if (node.y < marginY) { node.y = marginY; node.vy *= -0.5; }
+            if (node.y > physicsState.bounds.height - marginY) { node.y = physicsState.bounds.height - marginY; node.vy *= -0.5; }
         });
     }
 
@@ -322,7 +348,7 @@ function renderNodes(nodes) {
         const drawX = node.x - (120 / 2); 
         const drawY = node.y - (75); // Adjusted anchor (Face center approx)
         
-        node.element.style.transform = `translate3d(${drawX}px, ${drawY}px, 0)`;
+        node.element.style.transform = `translate3d(${drawX}px, ${drawY}px, 0) scale(${physicsState.zoom})`;
     });
 }
 
