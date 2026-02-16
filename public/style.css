@@ -6,7 +6,7 @@
     --comic-yellow: #f1c40f;
     --comic-blue: #3498db;
     
-    --font-heading: 'Bangers', sans-serif;
+    --font-heading: 'Chewy', cursive;
     --font-body: 'Comic Neue', cursive, sans-serif;
 }
 
@@ -47,10 +47,12 @@ header {
 
 header h1 {
     font-family: var(--font-heading);
-    font-size: 2rem;
+    font-size: 3rem; /* Chewy needs to be large to pop */
     margin: 0;
     letter-spacing: 1px;
     text-shadow: 2px 2px 0 var(--comic-yellow);
+    text-transform: none;
+    font-weight: 400; /* Chewy is naturally bold */
 }
 
 .meta {
@@ -291,4 +293,108 @@ footer {
     #grid {
         grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
     }
+}
+
+/* --- Dynamic Positioning Overrides --- */
+
+/* Force Bottom */
+.card:hover .chat-bubble.force-bottom {
+    bottom: auto;
+    top: 100%;
+    transform: translateX(-50%) translateY(15px) rotate(0deg);
+    animation: wobble-bottom 2s ease-in-out infinite;
+}
+
+@keyframes wobble-bottom {
+    0%, 100% { transform: translateX(-50%) translateY(15px) rotate(-1deg); }
+    50% { transform: translateX(-50%) translateY(15px) rotate(1deg); }
+}
+
+/* Force Left */
+.card:hover .chat-bubble.force-left {
+    bottom: auto;
+    top: 50%;
+    left: auto;
+    right: 100%; 
+    transform: translateY(-50%) translateX(-15px) rotate(0deg);
+    animation: wobble-left 2s ease-in-out infinite;
+}
+
+@keyframes wobble-left {
+    0%, 100% { transform: translateY(-50%) translateX(-15px) rotate(-1deg); }
+    50% { transform: translateY(-50%) translateX(-15px) rotate(1deg); }
+}
+
+/* Force Right */
+.card:hover .chat-bubble.force-right {
+    bottom: auto;
+    top: 50%;
+    left: 100%; 
+    right: auto;
+    transform: translateY(-50%) translateX(15px) rotate(0deg); 
+    animation: wobble-right 2s ease-in-out infinite;
+}
+
+@keyframes wobble-right {
+    0%, 100% { transform: translateY(-50%) translateX(15px) rotate(-1deg); }
+    50% { transform: translateY(-50%) translateX(15px) rotate(1deg); }
+}
+
+/* Generic Tail Overrides */
+
+/* Bottom: Point Up */
+.chat-bubble.force-bottom::after,
+.chat-bubble.force-bottom::before {
+    bottom: auto;
+    top: -14px;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    border-style: solid;
+    border-color: transparent transparent #000 transparent;
+    border-width: 0 10px 15px 10px;
+}
+.chat-bubble.force-bottom::before {
+    top: -11px;
+    border-color: transparent transparent #fff transparent;
+    border-width: 0 7px 12px 7px;
+    z-index: 102;
+}
+
+/* Left: Point Right */
+.chat-bubble.force-left::after,
+.chat-bubble.force-left::before {
+    left: 100%;
+    right: auto;
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    border-style: solid;
+    border-color: transparent transparent transparent #000;
+    border-width: 10px 0 10px 15px;
+}
+.chat-bubble.force-left::before {
+    margin-left: -3px; 
+    border-color: transparent transparent transparent #fff;
+    border-width: 7px 0 7px 12px;
+    z-index: 102;
+}
+
+/* Right: Point Left */
+.chat-bubble.force-right::after,
+.chat-bubble.force-right::before {
+    right: 100%;
+    left: auto;
+    bottom: auto;
+    top: 50%;
+    transform: translateY(-50%);
+    border-style: solid;
+    border-color: transparent #000 transparent transparent;
+    border-width: 10px 15px 10px 0;
+}
+.chat-bubble.force-right::before {
+    margin-right: -3px;
+    border-color: transparent #fff transparent transparent;
+    border-width: 7px 12px 7px 0;
+    z-index: 102;
 }

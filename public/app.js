@@ -147,6 +147,58 @@ function createCard(svc, maxLat, maxRPS) {
             <h2>${svc.name}</h2>
         </div>
     `;
+
+    // 4. Collision Detection (Viewpoint Boundary Check)
+    div.addEventListener('mouseenter', () => {
+        const bubble = div.querySelector('.chat-bubble');
+        if (!bubble) return;
+
+        // Reset
+        bubble.classList.remove('force-bottom', 'force-left', 'force-right');
+        
+        // Measure
+        const bWidth = bubble.offsetWidth || 220; // fallback width
+        const bHeight = bubble.offsetHeight || 100; // fallback height
+        const cRect = div.getBoundingClientRect();
+        
+        // Check Top
+        // Default position is "Top" (bottom: 100%). 
+        // Visual top is roughly: CardTop - BubbleHeight - 20px buffer
+        const projectedTop = cRect.top - bHeight - 20;
+
+        if (projectedTop < 0) {
+            bubble.classList.add('force-bottom');
+            // If we force bottom, we also need to check horizontal bounds
+            // But usually bottom is enough to solve the "off screen top" issue.
+        }
+
+        // Check Horizontal
+        // Default is centered: left: 50%, translateX(-50%)
+        const center = cRect.left + (cRect.width / 2);
+        const projectedLeft = center - (bWidth / 2);
+        const projectedRight = center + (bWidth / 2);
+
+        // We only apply side forces if we aren't already forcing bottom? 
+        // Or can we combine? 
+        // If we force bottom, it's still centered horizontally, so we might still need left/right.
+        // Let's allow combination or separate checks.
+        // However, the requested logic is "change position to left/right/below".
+        // Usually, if it's off the top, we want below.
+        // If it's off the side, we want the OTHER side.
+        
+        // It's possible to be off top AND off left (top-left corner).
+        // Then we might want "bottom-right" or just "bottom".
+        
+        // Let's prioritize Bottom if off-top.
+        // Then check horizontal.
+        
+        if (projectedLeft < 0) {
+             bubble.classList.add('force-right');
+        } else if (projectedRight > window.innerWidth) {
+             bubble.classList.add('force-left');
+        }
+    });
+
     return div;
 }
 
