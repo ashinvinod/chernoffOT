@@ -1,222 +1,311 @@
-# Chernoff Monitor — Implementation Plan
+# Chernoff Monitor — Outage Metrics Plan
 
-Lightweight Chernoff-face dashboard for monitoring OTel-instrumented services via Prometheus.
+Detailed plan to evolve the current dashboard into a type-aware outage visualization system that outputs four cross-cutting metrics per running service:
+
+1. Error rate
+2. Latency p95
+3. Traffic anomaly
+4. Saturation
 
 ---
 
 ## Goal
 
-A single Docker-deployable app that connects to an existing Prometheus (or compatible) instance, auto-discovers services, and renders a grid of Chernoff faces — one per service. No config files for the basics. Just `docker run` and go.
-
-**Target Audience:** Standard SaaS startups.
-**Compatibility:** Works with Prometheus, Thanos, Mimir, VictoriaMetrics, and cloud-managed Prometheus services (AWS/GCP/Azure).
+Provide a single, near-real-time view where operators can immediately spot which service is "off" during an incident, even across mixed workloads (HTTP services, databases, caches, queues, and workers).
 
 ---
 
-## Architecture
+## Operating Assumptions
+
+- Data source is Prometheus-compatible (`/api/v1/query` and label APIs).
+- Services expose heterogeneous metrics depending on service type.
+- Service type classification must be inferred and cached, with manual overrides available.
+- UI should receive both raw and normalized values.
+
+---
+
+## Target Architecture
 
 ```
-Browser (vanilla HTML/JS)
-   │
-   │  fetch /api/metrics
-   ▼
-Bun server (server.ts)
-   │
-   │  executes specific PromQL queries
-   ▼
-Prometheus (user's existing instance)
+Browser (public/app.js)
+   |
+   | GET /api/dashboard/state
+   v
+Bun Server (server.ts)
+   |- Service Discovery Engine
+   |- Heuristic Type Classifier
+   |- Type-Aware Metric Adapters
+   |- Normalization + Data Quality Layer
+   v
+Prometheus-compatible backend
 ```
 
-**Why a backend?**
-
-1.  **Security**: We do not expose a generic PromQL proxy. The server only runs specific, safe queries.
-2.  **CORS**: Browsers can't usually talk to Prometheus directly.
-3.  **Performance**: The server aggregates logic.
+Backend remains non-generic: it executes fixed query templates, not arbitrary user-supplied PromQL.
 
 ---
 
-## File Structure
+## Phase 1 — Service Identity and Discovery
 
-```
-chernoffOT2/
-├── server.ts              # Bun HTTP server: static files + API
-├── public/
-│   ├── index.html         # Single page
-│   ├── style.css          # Dark theme, premium monitoring aesthetic
-│   ├── app.js             # Discovery, polling, metrics, layout
-│   └── face.js            # SVG face renderer (pure function)
-├── Dockerfile             # Uses oven/bun
-├── .dockerignore
-├── package.json
-├── PLAN.md                # This file
-└── README.md
-```
+### 1.1 Identity contract
 
-Total: ~7 source files.
+Define stable service identity:
 
----
+- Preferred key: `service_key = service_name|namespace|cluster`
+- Label aliases to support heterogeneous telemetry:
+  - service: `service_name`, `service`
+  - status: `http_response_status_code`, `status_code`, `code`
 
-## Component Details
+### 1.2 All-service discovery with activity state
 
-### 1. `server.ts` — Bun Server
+Discover all known services, then compute live activity state:
 
-**API Endpoints:**
+- Primary source:
+  - label values API for service label aliases (global known service set)
+- Activity overlay:
+  - recency query (for example `up` and key service metrics) to compute service liveness windows
 
-| Endpoint            | Purpose                                            |
-| ------------------- | -------------------------------------------------- |
-| `GET /api/services` | Returns list of active `service_name` values       |
-| `GET /api/metrics`  | Returns aggregated metrics (errors, latency, load) |
-| `GET /api/config`   | Returns frontend config (refresh interval)         |
+Store `ServiceCatalog` entries:
 
-**Environment Variables (Configuration):**
+- `serviceKey`
+- `serviceName`
+- `namespace`
+- `cluster`
+- `firstSeenAt`
+- `active`
+- `lastSeenAt`
+- `state`
+- `missingSince`
 
-| Var                | Default                                | Description                                |
-| ------------------ | -------------------------------------- | ------------------------------------------ |
-| `PROMETHEUS_URL`   | `http://localhost:9090`                | Base URL for Prometheus/Thanos/Mimir       |
-| `REFRESH_INTERVAL` | `15`                                   | Seconds between dashboard refreshes        |
-| `PORT`             | `3000`                                 | Server port                                |
-| `LABEL_SERVICE`    | `service_name`                         | Label used for service discovery           |
-| `METRIC_DURATION`  | `http_server_request_duration_seconds` | Base metric name for latency/requests      |
-| `LABEL_STATUS`     | `http_response_status_code`            | Label for HTTP status (e.g. `status_code`) |
+State model:
 
-**Security Note:** Unlike a generic proxy, this backend _constructs_ the queries. It prevents arbitrary PromQL injection by whitelisting the query patterns.
+- `active`: seen in recent window
+- `missing_recently`: seen before but absent now
+- `stale`: absent beyond retention window
+
+Refresh cadence: every 60 seconds for state recompute.
+Catalog entries persist across refreshes (TTL-based pruning only).
 
 ---
 
-### 2. `public/face.js` — SVG Face Renderer
+## Phase 2 — Heuristic Service Type Classification
 
-A pure function: `renderFace(params) → SVG string`
+### 2.1 Type set
 
-**Input parameters (all 0–1):**
+- `application`
+- `db`
+- `cache`
+- `queue`
+- `worker`
+- `unknown`
 
-| Param       | Driven by             | Visual effect                                 |
-| ----------- | --------------------- | --------------------------------------------- |
-| `mouth`     | Error rate (inverted) | 0 = deep frown, 1 = wide smile                |
-| `eyeSize`   | Latency p95           | 0 = relaxed small eyes, 1 = wide/shocked eyes |
-| `browAngle` | Request rate          | 0 = furrowed/worried, 1 = relaxed             |
-| `health`    | Composite score       | 0 = red face, 0.5 = yellow, 1 = green         |
+### 2.2 Scoring model
 
-**SVG structure (viewBox 0 0 200 200):**
-_Standard Chernoff components (Head, Ears, Eyebrows, Eyes, Pupils, Nose, Mouth)._
+Compute weighted scores per service from metric-family and metadata evidence:
 
-**Face color mapping:**
+- Strong evidence: `+5`
+- Medium evidence: `+2`
+- Metadata hint: `+1`
+- Contradictory evidence: `-2`
 
-- `health=1.0` → `hsl(140, 45%, 82%)` (calm green)
-- `health=0.5` → `hsl(45, 55%, 80%)` (amber/yellow)
-- `health=0.0` → `hsl(0, 60%, 78%)` (warm red)
+Decision rule:
 
----
+- Choose top type only if:
+  - `topScore >= 5`
+  - `topScore - secondScore >= 3`
+- Else classify as `unknown`.
 
-### 3. `public/app.js` — Main App Logic
+Confidence:
 
-**Boot sequence:**
+- `confidence = clamp((topScore - secondScore) / max(topScore, 1), 0, 1)`
 
-1.  `GET /api/config`
-2.  `GET /api/services` → List of services
-3.  `GET /api/metrics` → All metrics in one go
+Evidence is retained for explainability in API response.
 
-**Normalization Strategy (Crucial for generic support):**
+### 2.3 Signal families
 
-1.  **Error Rate (Mouth)**:
-    - **Logic**: Non-linear sensitivity.
-    - `raw_error_rate < 0.001` (0.1%) → 😁 (1.0)
-    - `raw_error_rate > 0.05` (5%) → ☹️ (0.0)
-    - Formula: `1 - CLAMP(log10(error_rate * 1000 + 1) / log10(50 + 1), 0, 1)` (approximated)
-    - _Why_: A 1% error rate is usually bad. A linear scale makes 1% look like 99% health. We need 1% to look concerning.
+- `application` signals:
+  - `http_server_*`, `http_requests_*`, `grpc_server_*`
+- `db` signals:
+  - `postgres_*`, `mysql_*`, `mongodb_*`, lock/connection metrics
+- `cache` signals:
+  - `redis_*`, `memcached_*`, hit/miss, evictions, keyspace/connection metrics
+- `queue` signals:
+  - `kafka_*`, `rabbitmq_*`, `nats_*`, lag/depth metrics
+- `worker` signals:
+  - `job_*`, `task_*`, queue consume/process metrics with weak/absent inbound server metrics
 
-2.  **Latency p95 (Eyes)**:
-    - **Logic**: Logarithmic scale relative to cohort.
-    - Since services vary from 1ms to 5s, we can't use a linear max.
-    - Value = `log(service_latency) / log(max_latency_in_cluster)`
-    - Or simpler: `CLAMP(log10(latency_ms) / 4, 0, 1)` where 10s = 1.0 (shocked), 1ms = 0.0.
-    - _Decision_: Use `log10` scaling. `1ms` -> closed eyes, `1000ms` -> wide eyes.
+Metadata hints:
 
-3.  **Request Rate (Brows)**:
-    - **Logic**: Logarithmic relative to max.
-    - `val = log10(req_rate + 1) / log10(max_req_rate + 1)`
-    - Ensures small services don't disappear against a monolith.
+- `job`, `pod`, `container`, component/app label naming patterns
 
-**Handling missing data:**
+### 2.4 Overrides
 
-- Missing metrics → neutral face feature (0.5).
-- All missing → generic "ghost" face.
+Support explicit overrides for critical services:
 
----
+- map `serviceKey -> serviceType`
+- override wins over heuristic score
 
-### 4. `public/index.html` — Page Structure
-
-Standard layout with:
-
-- Header (Title, Status Dot)
-- Grid Main (injected cards)
-- Footer/Metadata
-
-**Card Interaction:**
-
-- Hover: Scale up + Glossy effect.
-- Click: Disabled for v1 (placeholder for future deep links).
+Classification cadence: every 10 minutes and on newly discovered services.
 
 ---
 
-### 5. `public/style.css` — Design System
+## Phase 3 — Type-Aware Metric Adapter Layer
 
-**Aesthetics:**
+For each type, define prioritized query templates for four required metrics with fallbacks.
 
-- **Techno/Cyberpunk Lite**: Dark mode, glassmorphism, neon accents (`#00e5a0`).
-- **Typography**: Inter/Roboto.
-- **Responsiveness**: Grid adapts columns automatically.
+### 3.1 Application
+
+- Error rate:
+  - `5xx + non-OK gRPC / total requests`
+- Latency p95:
+  - histogram p95 over request duration
+- Traffic anomaly:
+  - `(currentRPS - baselineRPS) / clamp_min(baselineRPS, epsilon)`
+- Saturation:
+  - max of CPU pressure, memory pressure, pool/thread pressure
+
+### 3.2 Database
+
+- Error rate:
+  - failed/timeout/deadlock operations / total operations
+- Latency p95:
+  - query latency p95
+- Traffic anomaly:
+  - current QPS vs baseline QPS
+- Saturation:
+  - max of connection usage, lock wait pressure, CPU/IO pressure
+
+### 3.3 Cache
+
+- Error rate:
+  - failed cache operations / total cache operations (or backend unavailability signal)
+- Latency p95:
+  - command/get-set latency p95
+- Traffic anomaly:
+  - ops/sec anomaly vs baseline
+- Saturation:
+  - max of memory pressure, eviction pressure, connection pressure
+
+### 3.4 Queue/Broker
+
+- Error rate:
+  - publish/consume failures and DLQ activity / total ops
+- Latency p95:
+  - processing latency or message age p95
+- Traffic anomaly:
+  - consumer throughput anomaly vs baseline
+- Saturation:
+  - max of lag ratio, depth growth pressure, broker resource pressure
+
+### 3.5 Worker
+
+- Error rate:
+  - failed jobs / total jobs
+- Latency p95:
+  - job runtime p95
+- Traffic anomaly:
+  - processed jobs anomaly vs baseline
+- Saturation:
+  - max of concurrency utilization, backlog age, compute pressure
+
+### 3.6 Query execution strategy
+
+- Batch by type and label to minimize query volume.
+- Use `Promise.all` per metric family where possible.
+- Timebox queries and return partial data on failures.
 
 ---
 
-### 6. Dockerfile
+## Phase 4 — Normalization and Data Quality
 
-```dockerfile
-FROM oven/bun:1-alpine
-WORKDIR /app
-COPY package.json ./
-RUN bun install --production
-COPY . .
-EXPOSE 3000
-CMD ["bun", "server.ts"]
-```
+For each service metric:
 
-**Usage:**
+- Provide raw fields:
+  - `errorRateRaw`
+  - `latencyP95MsRaw`
+  - `trafficAnomalyRaw`
+  - `saturationRaw`
+- Provide normalized fields in `[0,1]` for visualization:
+  - `errorRateNorm`
+  - `latencyNorm`
+  - `trafficNorm`
+  - `saturationNorm`
 
-```bash
-docker build -t chernoff-monitor .
-docker run -d -p 3000:3000 -e PROMETHEUS_URL=http://host.docker.internal:9090 chernoff-monitor
-```
+Missing data behavior:
 
----
-
-## Build Phases
-
-### Phase 1 — Face Renderer (`face.js`)
-
-- Implement `renderFace` with SVG paths.
-- Create a test harness HTML file to tweak the "emotions" ensuring 1% error looks sad.
-
-### Phase 2 — Bun Server (`server.ts`)
-
-- Setup Bun HTTP server.
-- Implement PromQL execution logic (using `fetch` to upstream).
-- Add robust error handling for upstream failures.
-
-### Phase 3 — Dashboard App (`app.js`)
-
-- Fetch data.
-- Apply normalization logic.
-- Render.
-
-### Phase 4 — Polish
-
-- CSS Glassmorphism.
-- Animations (face transitions).
+- Keep missing raw values as `null`
+- Use neutral normalized values for rendering fallback
+- Emit per-service data quality:
+  - `missingMetrics[]`
+  - `dataQualityScore`
 
 ---
 
-## Future (Post-MVP)
+## Phase 5 — API Contract for UI
 
-- Deep linking (click face -> go to Grafana).
-- Historical playback.
-- Auth (Basic Auth).
+### 5.1 `GET /api/services/catalog`
+
+Returns all known services and type/state metadata:
+
+- `serviceKey`
+- `serviceName`
+- `serviceType`
+- `active`
+- `state`
+- `lastSeenAt`
+- `missingSince`
+- `confidence`
+- `evidence[]`
+- `overrideApplied`
+
+### 5.2 `GET /api/services/metrics?window=5m`
+
+Returns four required metrics per service:
+
+- raw values
+- normalized values
+- `capturedAt`
+- missing flags/data quality
+
+### 5.3 `GET /api/dashboard/state`
+
+Convenience endpoint that combines catalog and metrics for one UI fetch cycle.
+
+---
+
+## Phase 6 — Caching and Refresh Cadence
+
+- Discovery cache: 60s
+- Type classification cache: 10m
+- Metrics cache: 15s
+- Serve stale-last-good response with `stale=true` flag on upstream failure
+
+---
+
+## Phase 7 — Validation and Rollout
+
+### 7.1 Quality gates
+
+- Active service discovery coverage >= 95%
+- Non-unknown classification rate >= 85% (before overrides)
+- Four-metric availability >= 80% across active services
+
+### 7.2 Rollout steps
+
+1. Ship service catalog + classifier metadata only
+2. Add type-aware metric adapters with fallback chains
+3. Switch UI to unified `/api/dashboard/state`
+4. Tune heuristics and overrides using production feedback
+
+---
+
+## Observability of the Observability Layer
+
+Instrument backend self-metrics:
+
+- query latency
+- query failure count
+- classifier unknown count
+- per-metric missingness rate
+- cache hit ratio
+
+These metrics are required to trust outage visuals during real incidents.
