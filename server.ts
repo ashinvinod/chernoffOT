@@ -47,7 +47,7 @@ type PromVectorItem = {
 };
 
 type PromQueryContext = {
-  serviceType: ServiceType | "catalog" | "classification" | "legacy";
+  serviceType: ServiceType | "catalog" | "classification";
   metricType: string;
   queryName: string;
   serviceLabel?: string;
@@ -348,11 +348,7 @@ function logPrometheusResponse(
   lines.push("  ----");
 
   const formatted = lines.join("\n");
-  if (details.ok) {
-    console.log(formatted);
-  } else {
-    console.error(formatted);
-  }
+  // Per-query logging disabled — summary logged per-service after metrics computation.
 }
 
 // Helper: Query Prometheus
@@ -913,45 +909,110 @@ function getApplicationDefinitions(window: string): {
       `sum by (${serviceLabel}) (rate(${METRIC_DURATION}_count{${serviceLabel}!="",${statusLabel}=~"5..|ERROR|error"}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(${METRIC_DURATION}_count{${serviceLabel}!=""}[${window}])), 0.000001)`,
   }));
 
+  // OTel stable (v1.20): http_server_duration_seconds
+  safeStatusLabels.forEach((statusLabel) => {
+    errorDefs.push({
+      name: `app_error_http_server_duration_s_${statusLabel}`,
+      query: (serviceLabel) =>
+        `sum by (${serviceLabel}) (rate(http_server_duration_seconds_count{${serviceLabel}!="",${statusLabel}=~"5..|ERROR|error"}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(http_server_duration_seconds_count{${serviceLabel}!=""}[${window}])), 0.000001)`,
+    });
+  });
+
+  // OTel older SDKs: http_server_duration_milliseconds
+  safeStatusLabels.forEach((statusLabel) => {
+    errorDefs.push({
+      name: `app_error_http_server_duration_ms_${statusLabel}`,
+      query: (serviceLabel) =>
+        `sum by (${serviceLabel}) (rate(http_server_duration_milliseconds_count{${serviceLabel}!="",${statusLabel}=~"5..|ERROR|error"}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(http_server_duration_milliseconds_count{${serviceLabel}!=""}[${window}])), 0.000001)`,
+    });
+  });
+
   errorDefs.push(
+    // Classic Prometheus: http_requests_total
     {
       name: "app_error_http_requests_total",
       query: (serviceLabel) =>
         `sum by (${serviceLabel}) (rate(http_requests_total{${serviceLabel}!="",status=~"5.."}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(http_requests_total{${serviceLabel}!=""}[${window}])), 0.000001)`,
     },
+    // Classic Prometheus: http_server_requests_total
     {
       name: "app_error_http_server_requests_total",
       query: (serviceLabel) =>
         `sum by (${serviceLabel}) (rate(http_server_requests_total{${serviceLabel}!="",status=~"5.."}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(http_server_requests_total{${serviceLabel}!=""}[${window}])), 0.000001)`,
     },
+    // Classic gRPC: grpc_server_handled_total
     {
       name: "app_error_grpc",
       query: (serviceLabel) =>
         `sum by (${serviceLabel}) (rate(grpc_server_handled_total{${serviceLabel}!="",grpc_code!="OK"}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(grpc_server_handled_total{${serviceLabel}!=""}[${window}])), 0.000001)`,
+    },
+    // OTel RPC current: rpc_server_call_duration_seconds (uses rpc_response_status_code)
+    {
+      name: "app_error_rpc_server_call_duration",
+      query: (serviceLabel) =>
+        `sum by (${serviceLabel}) (rate(rpc_server_call_duration_seconds_count{${serviceLabel}!="",rpc_response_status_code!~"0|OK|ok"}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(rpc_server_call_duration_seconds_count{${serviceLabel}!=""}[${window}])), 0.000001)`,
+    },
+    // OTel RPC older: rpc_server_duration_milliseconds (uses rpc_grpc_status_code)
+    {
+      name: "app_error_rpc_server_duration_ms",
+      query: (serviceLabel) =>
+        `sum by (${serviceLabel}) (rate(rpc_server_duration_milliseconds_count{${serviceLabel}!="",rpc_grpc_status_code!~"0|OK|ok"}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(rpc_server_duration_milliseconds_count{${serviceLabel}!=""}[${window}])), 0.000001)`,
     }
   );
 
   return {
     error: errorDefs,
     latencyMs: [
+      // OTel v1.24+ (current): http_server_request_duration_seconds (= METRIC_DURATION)
       {
         name: "app_latency_primary",
         query: (serviceLabel) =>
           `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(${METRIC_DURATION}_bucket{${serviceLabel}!=""}[${window}])))`,
         transform: (v) => v * 1000,
       },
+      // Explicit fallback for http_server_request_duration_seconds if METRIC_DURATION is overridden
       {
         name: "app_latency_http_server_request_duration",
         query: (serviceLabel) =>
           `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(http_server_request_duration_seconds_bucket{${serviceLabel}!=""}[${window}])))`,
         transform: (v) => v * 1000,
       },
+      // OTel stable (v1.20): http_server_duration_seconds
+      {
+        name: "app_latency_http_server_duration_s",
+        query: (serviceLabel) =>
+          `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(http_server_duration_seconds_bucket{${serviceLabel}!=""}[${window}])))`,
+        transform: (v) => v * 1000,
+      },
+      // OTel older SDKs: http_server_duration_milliseconds (already in ms)
+      {
+        name: "app_latency_http_server_duration_ms",
+        query: (serviceLabel) =>
+          `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(http_server_duration_milliseconds_bucket{${serviceLabel}!=""}[${window}])))`,
+        // No * 1000 — values already in milliseconds
+      },
+      // OTel RPC current: rpc_server_call_duration_seconds
+      {
+        name: "app_latency_rpc_server_call_duration",
+        query: (serviceLabel) =>
+          `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(rpc_server_call_duration_seconds_bucket{${serviceLabel}!=""}[${window}])))`,
+        transform: (v) => v * 1000,
+      },
+      // OTel RPC older: rpc_server_duration_milliseconds (already in ms)
+      {
+        name: "app_latency_rpc_server_duration_ms",
+        query: (serviceLabel) =>
+          `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(rpc_server_duration_milliseconds_bucket{${serviceLabel}!=""}[${window}])))`,
+        // No * 1000 — values already in milliseconds
+      },
+      // Classic Prometheus: http_request_duration_seconds
       {
         name: "app_latency_http_request_duration",
         query: (serviceLabel) =>
           `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(http_request_duration_seconds_bucket{${serviceLabel}!=""}[${window}])))`,
         transform: (v) => v * 1000,
       },
+      // Classic Prometheus summary
       {
         name: "app_latency_summary",
         query: (serviceLabel) =>
@@ -960,21 +1021,49 @@ function getApplicationDefinitions(window: string): {
       },
     ],
     trafficCurrent: [
+      // OTel v1.24+ (current): METRIC_DURATION _count
       {
         name: "app_rps_primary",
         query: (serviceLabel) =>
           `sum by (${serviceLabel}) (rate(${METRIC_DURATION}_count{${serviceLabel}!=""}[${window}]))`,
       },
+      // OTel stable (v1.20): http_server_duration_seconds _count
+      {
+        name: "app_rps_http_server_duration_s",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(http_server_duration_seconds_count{${serviceLabel}!=""}[${window}]))`,
+      },
+      // OTel older SDKs: http_server_duration_milliseconds _count
+      {
+        name: "app_rps_http_server_duration_ms",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(http_server_duration_milliseconds_count{${serviceLabel}!=""}[${window}]))`,
+      },
+      // OTel RPC current: rpc_server_call_duration_seconds _count
+      {
+        name: "app_rps_rpc_server_call_duration",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(rpc_server_call_duration_seconds_count{${serviceLabel}!=""}[${window}]))`,
+      },
+      // OTel RPC older: rpc_server_duration_milliseconds _count
+      {
+        name: "app_rps_rpc_server_duration_ms",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(rpc_server_duration_milliseconds_count{${serviceLabel}!=""}[${window}]))`,
+      },
+      // Classic Prometheus: http_requests_total
       {
         name: "app_rps_http_requests_total",
         query: (serviceLabel) =>
           `sum by (${serviceLabel}) (rate(http_requests_total{${serviceLabel}!=""}[${window}]))`,
       },
+      // Classic Prometheus: http_server_requests_total
       {
         name: "app_rps_http_server_requests_total",
         query: (serviceLabel) =>
           `sum by (${serviceLabel}) (rate(http_server_requests_total{${serviceLabel}!=""}[${window}]))`,
       },
+      // Classic gRPC: grpc_server_handled_total
       {
         name: "app_rps_grpc",
         query: (serviceLabel) =>
@@ -987,6 +1076,12 @@ function getApplicationDefinitions(window: string): {
         query: (serviceLabel) =>
           `max by (${serviceLabel}) (rate(process_cpu_seconds_total{${serviceLabel}!=""}[${window}]))`,
       },
+      // OTel .NET: dotnet_process_cpu_time_seconds_total
+      {
+        name: "app_saturation_dotnet_cpu",
+        query: (serviceLabel) =>
+          `max by (${serviceLabel}) (rate(dotnet_process_cpu_time_seconds_total{${serviceLabel}!=""}[${window}]))`,
+      },
       {
         name: "app_saturation_container_cpu",
         query: (serviceLabel) =>
@@ -996,6 +1091,12 @@ function getApplicationDefinitions(window: string): {
         name: "app_saturation_goroutines",
         query: (serviceLabel) =>
           `max by (${serviceLabel}) (go_goroutines{${serviceLabel}!=""} / 1000)`,
+      },
+      // JVM thread count as saturation signal
+      {
+        name: "app_saturation_jvm_threads",
+        query: (serviceLabel) =>
+          `max by (${serviceLabel}) (jvm_thread_count{${serviceLabel}!=""} / 1000)`,
       },
     ],
   };
@@ -1446,6 +1547,15 @@ async function getServiceMetricsSnapshot(
       };
     });
 
+    // Log per-service metrics summary
+    for (const s of services) {
+      const n = s.normalized;
+      const fmt = (v: number | null) => v == null ? "n/a" : v.toFixed(2);
+      console.log(
+        `[METRICS] ${s.serviceName} | ${s.serviceType} | err=${fmt(n.errorRateNorm)} lat=${fmt(n.latencyNorm)} trf=${fmt(n.trafficNorm)} sat=${fmt(n.saturationNorm)} qual=${s.dataQuality.dataQualityScore.toFixed(2)}`
+      );
+    }
+
     const snapshot: ServiceMetricsSnapshot = {
       capturedAt,
       stale: false,
@@ -1478,40 +1588,6 @@ async function getServiceMetricsSnapshot(
   }
 }
 
-// Legacy compatibility metrics used by the current frontend endpoints.
-async function getLegacyMetrics() {
-  const qErrors = `sum by (${LABEL_SERVICE}) (rate(${METRIC_DURATION}_count{${LABEL_STATUS}=~"5.."}[5m])) / sum by (${LABEL_SERVICE}) (rate(${METRIC_DURATION}_count[5m]))`;
-  const qLatency = `histogram_quantile(0.95, sum by (le, ${LABEL_SERVICE}) (rate(${METRIC_DURATION}_bucket[5m])))`;
-  const qRPS = `sum by (${LABEL_SERVICE}) (rate(${METRIC_DURATION}_count[5m]))`;
-
-  const [errors, latency, rps] = await Promise.all([
-    queryPrometheus(qErrors, {
-      serviceType: "legacy",
-      metricType: "error_rate",
-      queryName: "legacy_error_rate",
-      serviceLabel: LABEL_SERVICE,
-    }),
-    queryPrometheus(qLatency, {
-      serviceType: "legacy",
-      metricType: "latency_p95",
-      queryName: "legacy_latency_p95",
-      serviceLabel: LABEL_SERVICE,
-    }),
-    queryPrometheus(qRPS, {
-      serviceType: "legacy",
-      metricType: "traffic_current",
-      queryName: "legacy_rps",
-      serviceLabel: LABEL_SERVICE,
-    }),
-  ]);
-
-  return {
-    errors: errors || [],
-    latency: latency || [],
-    rps: rps || [],
-  };
-}
-
 // Bun Server
 const server = serve({
   port: SERVER_PORT,
@@ -1523,19 +1599,7 @@ const server = serve({
       return Response.json({ refreshInterval: REFRESH_INTERVAL });
     }
 
-    // 2. Legacy Services (kept for current UI compatibility)
-    if (url.pathname === "/api/services") {
-      const catalog = await getServiceCatalogSnapshot();
-      return Response.json(catalog.services.map((s) => s.serviceName));
-    }
-
-    // 3. Legacy Metrics (kept for current UI compatibility)
-    if (url.pathname === "/api/metrics") {
-      const metrics = await getLegacyMetrics();
-      return Response.json(metrics);
-    }
-
-    // 4. New Service Catalog endpoint
+    // 2. Service Catalog endpoint
     if (url.pathname === "/api/services/catalog") {
       const catalog = await getServiceCatalogSnapshot();
       const classifications = await getClassificationSnapshot(catalog);
@@ -1565,7 +1629,7 @@ const server = serve({
       });
     }
 
-    // 5. New Service Metrics endpoint
+    // 3. Service Metrics endpoint
     if (url.pathname === "/api/services/metrics") {
       const window = withDefaultWindow(url.searchParams.get("window"));
       const catalog = await getServiceCatalogSnapshot();
@@ -1580,7 +1644,7 @@ const server = serve({
       });
     }
 
-    // 6. New Combined endpoint
+    // 4. Combined endpoint
     if (url.pathname === "/api/dashboard/state") {
       const window = withDefaultWindow(url.searchParams.get("window"));
       const catalog = await getServiceCatalogSnapshot();

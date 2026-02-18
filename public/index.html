@@ -18,6 +18,7 @@
             </div>
             <div class="meta">
                 <span id="last-updated">Connecting...</span>
+                <button id="help-btn" title="Face Mapping Guide" aria-label="Help">?</button>
             </div>
         </header>
         
@@ -29,6 +30,77 @@
         <footer>
             Chernoff Face Monitoring • v0.1.0
         </footer>
+    </div>
+
+    <!-- Mapping Config Modal -->
+    <div id="mapping-overlay" class="modal-overlay">
+        <div class="modal-card">
+            <button id="modal-close" class="modal-close" aria-label="Close">&times;</button>
+            <h2 class="modal-title">Face Mapping Config</h2>
+            <p class="modal-subtitle">Choose which metric drives each facial feature. Changes are saved automatically.</p>
+
+            <div class="mapping-grid">
+                <!-- Mouth -->
+                <div class="mapping-row">
+                    <div class="feature-info">
+                        <span class="feature-icon">👄</span>
+                        <div>
+                            <strong>Mouth</strong>
+                            <span class="feature-hint">😊 Happy → 😟 Sad</span>
+                        </div>
+                    </div>
+                    <select id="map-mouth" class="mapping-select"></select>
+                </div>
+
+                <!-- Eye Size -->
+                <div class="mapping-row">
+                    <div class="feature-info">
+                        <span class="feature-icon">👁️</span>
+                        <div>
+                            <strong>Eye Size</strong>
+                            <span class="feature-hint">😑 Calm → 😳 Wide</span>
+                        </div>
+                    </div>
+                    <select id="map-eyeSize" class="mapping-select"></select>
+                </div>
+
+                <!-- Brow Angle -->
+                <div class="mapping-row">
+                    <div class="feature-info">
+                        <span class="feature-icon">🤨</span>
+                        <div>
+                            <strong>Brow Angle</strong>
+                            <span class="feature-hint">😌 Relaxed → 😠 Angry</span>
+                        </div>
+                    </div>
+                    <select id="map-browAngle" class="mapping-select"></select>
+                </div>
+
+                <!-- Health (Head Color) -->
+                <div class="mapping-row">
+                    <div class="feature-info">
+                        <span class="feature-icon">🟢</span>
+                        <div>
+                            <strong>Health (Head Color)</strong>
+                            <span class="feature-hint">🟢 Healthy → 🔴 Critical</span>
+                        </div>
+                    </div>
+                    <select id="map-health" class="mapping-select"></select>
+                </div>
+            </div>
+
+            <div class="modal-legend">
+                <h3>Legend</h3>
+                <div class="legend-items">
+                    <div class="legend-item"><span class="legend-dot" style="background:#4ade80"></span> Health &gt; 66% — Green</div>
+                    <div class="legend-item"><span class="legend-dot" style="background:#facc15"></span> Health 33–66% — Yellow</div>
+                    <div class="legend-item"><span class="legend-dot" style="background:#fb7185"></span> Health &lt; 33% — Red</div>
+                    <div class="legend-item"><span class="legend-dot" style="background:#60a5fa"></span> Sweat drops at &lt; 30%</div>
+                </div>
+            </div>
+
+            <button id="mapping-reset" class="mapping-reset-btn">Reset to Defaults</button>
+        </div>
     </div>
     
     <script type="module" src="./app.js"></script>

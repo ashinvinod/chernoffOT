@@ -8,7 +8,57 @@ const physicsState = {
     zoom: 1
 };
 
-// --- Config ---
+// --- Mapping Config ---
+const STORAGE_KEY = "chernoffOT_mapping";
+
+const METRICS = [
+    { id: "errorNorm",      label: "Error Rate" },
+    { id: "latencyNorm",    label: "Latency P95" },
+    { id: "trafficNorm",    label: "Traffic Anomaly" },
+    { id: "saturationNorm", label: "Saturation" },
+];
+
+const FEATURES = ["mouth", "eyeSize", "browAngle", "health"];
+
+const DEFAULT_MAPPING = {
+    mouth:    "errorNorm",
+    eyeSize:  "latencyNorm",
+    browAngle: "trafficNorm",
+    health:   "saturationNorm",
+};
+
+// Active mapping (loaded from localStorage or defaults)
+let featureMapping = loadMapping();
+
+function loadMapping() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            // Validate: every feature key must exist and value must be a valid metric
+            const validMetricIds = new Set(METRICS.map(m => m.id));
+            for (const f of FEATURES) {
+                if (!parsed[f] || !validMetricIds.has(parsed[f])) {
+                    return { ...DEFAULT_MAPPING };
+                }
+            }
+            return parsed;
+        }
+    } catch (e) {
+        console.warn("Failed to load mapping from localStorage", e);
+    }
+    return { ...DEFAULT_MAPPING };
+}
+
+function saveMapping() {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(featureMapping));
+    } catch (e) {
+        console.warn("Failed to save mapping to localStorage", e);
+    }
+}
+
+// --- Physics Config ---
 const MAX_LATENCY_MS = 2000; 
 const MAX_RPS = 100;
 const REPEL_RADIUS = 60; // Radius of repulsion (Diameter ~120)
@@ -16,6 +66,9 @@ const FORCE_CENTER = 0.002; // Weak Pull to center
 const FORCE_REPEL = 0.2; // Strong Push away
 const DAMPING = 0.9;
 const MAX_VELOCITY = 2; // Slow movement for "standing" feel
+
+// Cached latest service data for re-rendering on mapping change
+let latestServiceData = {};
 
 async function init() {
     try {
@@ -41,17 +94,16 @@ async function init() {
             // Update Zoom
             let newZoom = physicsState.zoom - delta * sensitivity;
             newZoom = Math.max(0.1, Math.min(newZoom, 5)); // Clamp 0.1x to 5x
-            
             physicsState.zoom = newZoom;
             
-            // Re-run layout (fewer ticks for responsiveness)
-            layout(30); 
+            // Re-render immediately (layout doesn't depend on zoom anymore)
+            renderNodes(Array.from(physicsState.nodes.values()));
         }, { passive: false });
     }
-    
-    // Start Animation Loop (Removed, now static)
-    // requestAnimationFrame(physicsLoop);
 
+    // Setup modal & mapping UI
+    setupMappingModal();
+    
     // Initial fetch
     await update();
 
@@ -69,58 +121,69 @@ function updateBounds() {
     physicsState.bounds.centerY = grid.clientHeight / 2 + 100; 
 }
 
+function clamp01(v) {
+    if (!Number.isFinite(v)) return 0;
+    return Math.max(0, Math.min(1, v));
+}
+
+function formatSignedPercent(ratio) {
+    const pct = ratio * 100;
+    const prefix = pct > 0 ? "+" : "";
+    return `${prefix}${pct.toFixed(1)}%`;
+}
+
 async function update() {
     const lastUpdated = document.getElementById("last-updated");
 
     try {
         if (lastUpdated) lastUpdated.textContent = "Updating...";
-        
-        // Parallel fetch
-        const [svcRes, metricRes] = await Promise.all([
-            fetch("/api/services"),
-            fetch("/api/metrics")
-        ]);
 
-        const serviceList = await svcRes.json(); 
-        const metrics = await metricRes.json();
+        const stateRes = await fetch("/api/dashboard/state?window=5m");
+        if (!stateRes.ok) throw new Error(`Dashboard state fetch failed: ${stateRes.status}`);
 
-        if (lastUpdated) lastUpdated.textContent = new Date().toLocaleTimeString();
+        const dashboardState = await stateRes.json();
+        const metricServices = dashboardState?.metrics?.services || [];
+        const stale = !!dashboardState?.stale;
+
+        if (lastUpdated) {
+            const capturedAt = dashboardState?.metrics?.capturedAt || dashboardState?.capturedAt;
+            const timestamp = capturedAt ? new Date(capturedAt).toLocaleTimeString() : new Date().toLocaleTimeString();
+            lastUpdated.textContent = stale ? `${timestamp} (stale)` : timestamp;
+        }
 
         // --- Process Data ---
         const data = {};
-        serviceList.forEach(svc => {
-            data[svc] = { 
-                name: svc,
-                errorRate: 0,
-                latency: 0,
-                rps: 0 
+        metricServices.forEach((svc) => {
+            if (!svc || !svc.serviceName) return;
+
+            const raw = svc.raw || {};
+            const normalized = svc.normalized || {};
+
+            const errorRateRaw = raw.errorRateRaw ?? 0;
+            const latencyP95MsRaw = raw.latencyP95MsRaw ?? 0;
+            const trafficAnomalyRaw = raw.trafficAnomalyRaw ?? 0;
+            const saturationRaw = raw.saturationRaw ?? 0;
+
+            data[svc.serviceName] = {
+                name: svc.serviceName,
+                serviceType: svc.serviceType || "unknown",
+                state: svc.state || "active",
+                errorRate: errorRateRaw,
+                latencyMs: latencyP95MsRaw,
+                trafficAnomaly: trafficAnomalyRaw,
+                saturation: saturationRaw,
+                errorNorm: normalized.errorRateNorm ?? clamp01(Math.log10(errorRateRaw * 1000 + 1) / 2),
+                latencyNorm: normalized.latencyNorm ?? clamp01(Math.log10(latencyP95MsRaw + 1) / 3),
+                trafficNorm: normalized.trafficNorm ?? clamp01(Math.abs(trafficAnomalyRaw) / 2),
+                saturationNorm: normalized.saturationNorm ?? clamp01(saturationRaw)
             };
         });
 
-        const mapMetrics = (list, key) => {
-            if (!list) return;
-            list.forEach(item => {
-                const svc = item.metric.service_name || item.metric.service;
-                const val = parseFloat(item.value[1]);
-                if (data[svc]) {
-                    data[svc][key] = val;
-                } else if (svc) {
-                    data[svc] = { name: svc, errorRate: 0, latency: 0, rps: 0 };
-                    data[svc][key] = val;
-                }
-            });
-        };
-
-        mapMetrics(metrics.errors, 'errorRate');
-        mapMetrics(metrics.latency, 'latency');
-        mapMetrics(metrics.rps, 'rps');
-
-        // Calculate Cohort Max
-        const maxRPS = Math.max(...Object.values(data).map(d => d.rps), 10);
-        const maxLat = Math.max(...Object.values(data).map(d => d.latency), 0.1); 
+        // Cache for re-renders on mapping change
+        latestServiceData = data;
 
         // Reconciliation & Render
-        reconcileNodes(data, maxLat, maxRPS);
+        reconcileNodes(data);
 
     } catch (e) {
         console.error("Update failed", e);
@@ -128,7 +191,7 @@ async function update() {
     }
 }
 
-function reconcileNodes(data, maxLat, maxRPS) {
+function reconcileNodes(data) {
     const grid = document.getElementById("grid");
     if (!grid) return;
 
@@ -158,22 +221,32 @@ function reconcileNodes(data, maxLat, maxRPS) {
             bodyColor = getTrafficUnrelatedColor();
         }
 
-        // Compute Face Params
-        const errScore = Math.min(1, Math.log10(svc.errorRate * 1000 + 1) / 2);
-        const mouth = 1 - errScore;
-        const latScore = Math.min(1, Math.log10(svc.latency * 1000 + 1) / Math.log10(maxLat * 1000 + 1));
-        const eyeSize = latScore; 
-        const loadScore = Math.min(1, Math.log10(svc.rps + 1) / Math.log10(maxRPS + 1));
-        const browAngle = 1 - loadScore;
-        const health = 1 - Math.max(errScore, latScore * 0.3);
+        // Compute Face Params using configurable mapping
+        const scores = {
+            errorNorm: clamp01(svc.errorNorm),
+            latencyNorm: clamp01(svc.latencyNorm),
+            trafficNorm: clamp01(svc.trafficNorm),
+            saturationNorm: clamp01(svc.saturationNorm),
+        };
+
+        const mouthScore = scores[featureMapping.mouth] ?? 0;
+        const mouth = 1 - mouthScore;
+        const eyeSize = scores[featureMapping.eyeSize] ?? 0;
+        const browScore = scores[featureMapping.browAngle] ?? 0;
+        const browAngle = 1 - browScore;
+        const healthMetricScore = scores[featureMapping.health] ?? 0;
+        // Health is composite: dominant metric at 80%, others contribute small amounts
+        const health = 1 - Math.max(healthMetricScore * 0.8, mouthScore * 0.15, eyeSize * 0.15);
 
         const svgContent = renderFace({ mouth, eyeSize, browAngle, health, bodyColor });
         
         // Update Stats Text (Labels) + Bubble Text
         const bubbleHTML = `<div class="chat-bubble bubble-v${Math.floor(Math.random() * 4) + 1}">
             <div><span class="label">ERR:</span> ${(svc.errorRate * 100).toFixed(2)}%</div>
-            <div><span class="label">LAT:</span> ${(svc.latency * 1000).toFixed(0)}ms</div>
-            <div><span class="label">RPS:</span> ${svc.rps.toFixed(1)}</div>
+            <div><span class="label">LAT:</span> ${svc.latencyMs.toFixed(0)}ms</div>
+            <div><span class="label">ANOM:</span> ${formatSignedPercent(svc.trafficAnomaly)}</div>
+            <div><span class="label">SAT:</span> ${(svc.saturation * 100).toFixed(0)}%</div>
+            <div><span class="label">TYPE:</span> ${svc.serviceType}</div>
         </div>`;
         // Note: we recreate bubble HTML because stats change. 
         // Optimized: only update text inside bubble if needed? 
@@ -220,8 +293,10 @@ function reconcileNodes(data, maxLat, maxRPS) {
             if (bubbleEl) {
                  bubbleEl.innerHTML = `
                     <div><span class="label">ERR:</span> ${(svc.errorRate * 100).toFixed(2)}%</div>
-                    <div><span class="label">LAT:</span> ${(svc.latency * 1000).toFixed(0)}ms</div>
-                    <div><span class="label">RPS:</span> ${svc.rps.toFixed(1)}</div>
+                    <div><span class="label">LAT:</span> ${svc.latencyMs.toFixed(0)}ms</div>
+                    <div><span class="label">ANOM:</span> ${formatSignedPercent(svc.trafficAnomaly)}</div>
+                    <div><span class="label">SAT:</span> ${(svc.saturation * 100).toFixed(0)}%</div>
+                    <div><span class="label">TYPE:</span> ${svc.serviceType}</div>
                  `;
             }
         }
@@ -257,7 +332,7 @@ function layout(ticks = 300) {
 
     const { centerX, centerY } = physicsState.bounds;
     const TICKS = ticks;
-    const MIN_DIST = 200 * physicsState.zoom; // Scale spacing with zoom
+    const MIN_DIST = 200; // Fixed spacing (renderNodes handles visual scaling)
     
     // Simulation Loop (Synchronous)
     for (let i = 0; i < TICKS; i++) {
@@ -344,11 +419,91 @@ function renderNodes(nodes) {
         }
 
         // Center the element on coordinate
-        // SVG is now smaller (height 120px)
-        const drawX = node.x - (120 / 2); 
-        const drawY = node.y - (75); // Adjusted anchor (Face center approx)
+        // Apply Zoom to coordinate system (World -> Screen)
+        const { centerX, centerY } = physicsState.bounds;
+        const distX = node.x - centerX;
+        const distY = node.y - centerY;
+        
+        const screenX = centerX + distX * physicsState.zoom;
+        const screenY = centerY + distY * physicsState.zoom;
+
+        const drawX = screenX - (120 / 2); 
+        const drawY = screenY - (75); // Adjusted anchor (Face center approx)
         
         node.element.style.transform = `translate3d(${drawX}px, ${drawY}px, 0) scale(${physicsState.zoom})`;
+    });
+}
+
+// ========================================
+// Mapping Modal Logic
+// ========================================
+
+function setupMappingModal() {
+    const overlay  = document.getElementById("mapping-overlay");
+    const helpBtn  = document.getElementById("help-btn");
+    const closeBtn = document.getElementById("modal-close");
+    const resetBtn = document.getElementById("mapping-reset");
+
+    if (!overlay || !helpBtn) return;
+
+    // Populate dropdowns
+    FEATURES.forEach(featureId => {
+        const select = document.getElementById(`map-${featureId}`);
+        if (!select) return;
+
+        // Build options
+        select.innerHTML = METRICS.map(m =>
+            `<option value="${m.id}" ${featureMapping[featureId] === m.id ? "selected" : ""}>${m.label}</option>`
+        ).join("");
+
+        // On change → save + re-render
+        select.addEventListener("change", () => {
+            featureMapping[featureId] = select.value;
+            saveMapping();
+            // Re-render faces with new mapping
+            if (Object.keys(latestServiceData).length > 0) {
+                reconcileNodes(latestServiceData);
+            }
+        });
+    });
+
+    // Open
+    helpBtn.addEventListener("click", () => {
+        overlay.classList.add("open");
+    });
+
+    // Close
+    closeBtn.addEventListener("click", () => {
+        overlay.classList.remove("open");
+    });
+
+    // Close on overlay click (outside card)
+    overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) {
+            overlay.classList.remove("open");
+        }
+    });
+
+    // Close on Escape
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && overlay.classList.contains("open")) {
+            overlay.classList.remove("open");
+        }
+    });
+
+    // Reset
+    resetBtn.addEventListener("click", () => {
+        featureMapping = { ...DEFAULT_MAPPING };
+        saveMapping();
+        // Update dropdown selections
+        FEATURES.forEach(featureId => {
+            const select = document.getElementById(`map-${featureId}`);
+            if (select) select.value = featureMapping[featureId];
+        });
+        // Re-render
+        if (Object.keys(latestServiceData).length > 0) {
+            reconcileNodes(latestServiceData);
+        }
     });
 }
 

@@ -399,3 +399,273 @@ footer {
     border-width: 7px 12px 7px 0;
     z-index: 102;
 }
+
+/* ========================================
+   Help Button
+   ======================================== */
+
+#help-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-left: 10px;
+    padding: 0;
+    border: 3px solid #000;
+    border-radius: 50%;
+    background: var(--comic-yellow);
+    color: #000;
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+    box-shadow: 2px 2px 0 #000;
+    line-height: 1;
+    text-transform: none;
+}
+
+#help-btn:hover {
+    transform: scale(1.15) rotate(-5deg);
+    box-shadow: 3px 3px 0 #000;
+    background: #fde68a;
+}
+
+#help-btn:active {
+    transform: scale(0.95);
+    box-shadow: 1px 1px 0 #000;
+}
+
+/* ========================================
+   Modal Overlay
+   ======================================== */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+}
+
+.modal-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.modal-card {
+    position: relative;
+    background: #fff;
+    border: 4px solid #000;
+    border-radius: 24px;
+    padding: 2rem 2.25rem 1.5rem;
+    max-width: 500px;
+    width: 90%;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.2);
+    font-family: var(--font-body);
+    transform: translateY(20px) scale(0.95);
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.modal-overlay.open .modal-card {
+    transform: translateY(0) scale(1);
+}
+
+.modal-close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    width: 32px;
+    height: 32px;
+    border: 3px solid #000;
+    border-radius: 50%;
+    background: var(--comic-red);
+    color: #fff;
+    font-size: 1.2rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 2px 2px 0 #000;
+    transition: transform 0.15s;
+}
+
+.modal-close:hover {
+    transform: scale(1.1) rotate(5deg);
+}
+
+.modal-title {
+    font-family: var(--font-heading);
+    font-size: 1.8rem;
+    margin: 0 0 0.25rem;
+    text-shadow: 2px 2px 0 var(--comic-yellow);
+    text-transform: none;
+}
+
+.modal-subtitle {
+    font-size: 0.85rem;
+    color: #555;
+    margin: 0 0 1.25rem;
+    text-transform: none;
+    line-height: 1.4;
+}
+
+/* ========================================
+   Mapping Grid
+   ======================================== */
+
+.mapping-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.mapping-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    background: #f9fafb;
+    border: 2px solid #e5e7eb;
+    border-radius: 14px;
+    transition: border-color 0.15s;
+}
+
+.mapping-row:hover {
+    border-color: var(--comic-blue);
+}
+
+.feature-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.feature-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.feature-info strong {
+    display: block;
+    font-size: 0.9rem;
+    text-transform: none;
+}
+
+.feature-hint {
+    display: block;
+    font-size: 0.7rem;
+    color: #888;
+    text-transform: none;
+    white-space: nowrap;
+}
+
+.mapping-select {
+    flex-shrink: 0;
+    padding: 6px 28px 6px 10px;
+    border: 2px solid #000;
+    border-radius: 8px;
+    background: #fff;
+    font-family: var(--font-body);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #111;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    transition: box-shadow 0.15s;
+    text-transform: none;
+}
+
+.mapping-select:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.3);
+}
+
+/* ========================================
+   Legend
+   ======================================== */
+
+.modal-legend {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 2px dashed #ddd;
+}
+
+.modal-legend h3 {
+    font-family: var(--font-heading);
+    font-size: 1.1rem;
+    margin: 0 0 0.5rem;
+    text-transform: none;
+}
+
+.legend-items {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 16px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: #444;
+    text-transform: none;
+}
+
+.legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid #000;
+    flex-shrink: 0;
+}
+
+/* ========================================
+   Reset Button
+   ======================================== */
+
+.mapping-reset-btn {
+    display: block;
+    width: 100%;
+    margin-top: 1.25rem;
+    padding: 10px;
+    border: 3px solid #000;
+    border-radius: 12px;
+    background: #f3f4f6;
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #111;
+    cursor: pointer;
+    box-shadow: 3px 3px 0 #000;
+    transition: transform 0.1s, box-shadow 0.1s, background 0.1s;
+    text-transform: uppercase;
+}
+
+.mapping-reset-btn:hover {
+    background: var(--comic-yellow);
+    transform: translateY(-1px);
+    box-shadow: 4px 4px 0 #000;
+}
+
+.mapping-reset-btn:active {
+    transform: translateY(2px);
+    box-shadow: 1px 1px 0 #000;
+}
