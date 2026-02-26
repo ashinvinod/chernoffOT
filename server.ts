@@ -1,5 +1,8 @@
 import { serve } from "bun";
 
+const APP_VERSION = "0.1.0";
+const serverStartTime = Date.now();
+
 console.log("Starting server...");
 
 // Configuration from Env
@@ -1588,11 +1591,55 @@ async function getServiceMetricsSnapshot(
   }
 }
 
+// Health check: probe Prometheus connectivity.
+async function checkHealth(): Promise<{
+  status: "ok" | "degraded";
+  prometheus: boolean;
+  prometheusUrl: string;
+  version: string;
+  uptime: number;
+}> {
+  let prometheusOk = false;
+
+  try {
+    const res = await fetch(
+      new URL("/api/v1/status/buildinfo", PROMETHEUS_URL).toString(),
+      { signal: AbortSignal.timeout(3000) }
+    );
+    prometheusOk = res.ok;
+  } catch {
+    // Also try a basic query — some backends don't expose /buildinfo
+    try {
+      const u = new URL("/api/v1/query", PROMETHEUS_URL);
+      u.searchParams.set("query", "up");
+      const res = await fetch(u.toString(), { signal: AbortSignal.timeout(3000) });
+      prometheusOk = res.ok;
+    } catch {
+      prometheusOk = false;
+    }
+  }
+
+  return {
+    status: prometheusOk ? "ok" : "degraded",
+    prometheus: prometheusOk,
+    prometheusUrl: PROMETHEUS_URL,
+    version: APP_VERSION,
+    uptime: Math.floor((Date.now() - serverStartTime) / 1000),
+  };
+}
+
 // Bun Server
 const server = serve({
   port: SERVER_PORT,
   async fetch(req) {
     const url = new URL(req.url);
+
+    // 0. Health check
+    if (url.pathname === "/api/healthz") {
+      const health = await checkHealth();
+      const status = health.prometheus ? 200 : 503;
+      return Response.json(health, { status });
+    }
 
     // 1. Config
     if (url.pathname === "/api/config") {
@@ -1711,6 +1758,26 @@ const server = serve({
   },
 });
 
-console.log(`Listening on http://localhost:${server.port}`);
-console.log(`Connected to Prometheus at ${PROMETHEUS_URL}`);
-console.log(`Service label aliases: ${SERVICE_LABEL_ALIASES.join(", ") || "(none)"}`);
+const labelPreview = SERVICE_LABEL_ALIASES.slice(0, 3).join(", ");
+console.log(`
+┌─────────────────────────────────────────────┐
+│          chernoffOT v${APP_VERSION}                    │
+├─────────────────────────────────────────────┤
+│  Dashboard  : http://localhost:${String(server.port).padEnd(13)}│
+│  Prometheus : ${PROMETHEUS_URL.slice(0, 29).padEnd(29)}│
+│  Refresh    : ${String(REFRESH_INTERVAL).padEnd(1)}s                            │
+│  Labels     : ${labelPreview.slice(0, 29).padEnd(29)}│
+│  Health     : /api/healthz                  │
+└─────────────────────────────────────────────┘
+`);
+
+// Probe Prometheus on startup
+checkHealth().then((h) => {
+  if (h.prometheus) {
+    console.log("✅ Prometheus connection verified");
+  } else {
+    console.warn("⚠️  Cannot reach Prometheus at " + PROMETHEUS_URL);
+    console.warn("   Set PROMETHEUS_URL env var to your Prometheus-compatible endpoint.");
+    console.warn("   Docs: https://github.com/your-org/chernoff#configuration");
+  }
+});

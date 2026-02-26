@@ -82,6 +82,12 @@ header h1 {
     padding: 4rem;
 }
 
+.loading.error {
+    color: var(--comic-red);
+    font-size: 1.2rem;
+    font-family: var(--font-body);
+}
+
 /* Card: Dynamic Positioning */
 .card {
     position: absolute; /* Dynamic positioning */

@@ -188,6 +188,16 @@ async function update() {
     } catch (e) {
         console.error("Update failed", e);
         if (lastUpdated) lastUpdated.textContent = "Error";
+
+        // Remove loading indicator even on failure
+        const grid = document.getElementById("grid");
+        if (grid) {
+            const loading = grid.querySelector('.loading');
+            if (loading) {
+                loading.textContent = `Failed to load metrics — ${e.message || "server unreachable"}. Retrying...`;
+                loading.classList.add('error');
+            }
+        }
     }
 }
 

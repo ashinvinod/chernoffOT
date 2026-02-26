@@ -1,0 +1,10 @@
+node_modules
+.git
+.gitignore
+*.md
+PLAN.md
+chart/
+examples/
+.dockerignore
+Dockerfile
+docker-compose.yaml
