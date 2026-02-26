@@ -3,7 +3,7 @@
 **Real-time service monitoring with Chernoff faces.**
 Spot outages at a glance — happy faces mean healthy services, angry faces mean something's wrong.
 
-ChernoffOT queries any **Prometheus-compatible** endpoint and turns your services into expressive cartoon faces. No managed services required — a self-hosted Prometheus is all you need.
+ChernoffOT queries any **Prometheus-compatible** endpoint and turns your services into expressive cartoon faces. No managed services required — a self-hosted instance is all you need.
 
 ---
 
@@ -17,7 +17,7 @@ Spins up ChernoffOT + a local Prometheus. Nothing else to install.
 docker compose up
 ```
 
-Open [http://localhost:3000](http://localhost:3000) — you'll see faces for every service Prometheus discovers.
+Open [http://localhost:3000](http://localhost:3000) — you'll see faces for every discovered service.
 
 ### Docker (Bring Your Own Prometheus)
 
@@ -60,7 +60,7 @@ ChernoffOT auto-discovers your services, classifies them by type (app, database,
 
 ### How metrics get into Prometheus
 
-Prometheus **scrapes** your services — it pulls from `/metrics` endpoints over your internal network. If you use **OpenTelemetry**, the OTel Collector exports metrics in Prometheus format, which Prometheus then scrapes.
+It works by **scraping** your services — pulling from `/metrics` endpoints over your internal network. If you use **OpenTelemetry**, the OTel Collector exports metrics in Prometheus format, which are then scraped automatically.
 
 ```
 Your App → OTel Collector → /metrics endpoint → Prometheus → ChernoffOT
@@ -76,7 +76,7 @@ Your App → OTel Collector → /metrics endpoint → Prometheus → ChernoffOT
 helm install chernoff oci://ghcr.io/your-org/chernoff-chart
 ```
 
-When `prometheus.url` is not set, ChernoffOT auto-discovers common in-cluster Prometheus endpoints (kube-prometheus-stack, Prometheus Operator, VictoriaMetrics, Thanos, Mimir).
+When `prometheus.url` is not set, ChernoffOT auto-discovers common in-cluster endpoints (kube-prometheus-stack, Prometheus Operator, VictoriaMetrics, Thanos, Mimir).
 
 To specify manually:
 
@@ -96,7 +96,7 @@ ChernoffOT works with any PromQL-compatible backend. Just point `PROMETHEUS_URL`
 | Azure Monitor Prometheus  | `https://<workspace>.prometheus.monitor.azure.com`                                   | `azure`           |
 | Grafana Cloud             | `https://prometheus-prod-XX.grafana.net/api/prom`                                    | `bearer`          |
 
-These are optional — most teams don't need them. A self-hosted Prometheus (bundled in `docker compose`) handles the typical usecases just fine.
+These are optional — most teams don't need them. A self-hosted instance (bundled in `docker compose`) handles the typical usecases just fine.
 
 ---
 
@@ -108,7 +108,7 @@ All configuration is via environment variables with sensible defaults:
 
 | Variable           | Default                 | Description                           |
 | ------------------ | ----------------------- | ------------------------------------- |
-| `PROMETHEUS_URL`   | `http://localhost:9090` | Prometheus-compatible PromQL endpoint |
+| `PROMETHEUS_URL`   | `http://localhost:9090` | PromQL-compatible endpoint            |
 | `PORT`             | `3000`                  | Port the ChernoffOT server listens on |
 | `REFRESH_INTERVAL` | `15`                    | Dashboard refresh interval in seconds |
 
@@ -123,13 +123,13 @@ All configuration is via environment variables with sensible defaults:
 
 ### Service Discovery & Labels
 
-| Variable                 | Default                                | Description                                   |
-| ------------------------ | -------------------------------------- | --------------------------------------------- |
-| `LABEL_SERVICE`          | `service_name`                         | Primary Prometheus label identifying services |
-| `SERVICE_LABEL_ALIASES`  | `service_name,service`                 | Comma-separated fallback label names          |
-| `LABEL_STATUS`           | `http_response_status_code`            | Label used for HTTP status codes              |
-| `METRIC_DURATION`        | `http_server_request_duration_seconds` | Primary request duration metric name          |
-| `SERVICE_TYPE_OVERRIDES` | —                                      | Force service types: `svc1=db,svc2=cache`     |
+| Variable                 | Default                                | Description                               |
+| ------------------------ | -------------------------------------- | ----------------------------------------- |
+| `LABEL_SERVICE`          | `service_name`                         | Primary label identifying services        |
+| `SERVICE_LABEL_ALIASES`  | `service_name,service`                 | Comma-separated fallback label names      |
+| `LABEL_STATUS`           | `http_response_status_code`            | Label used for HTTP status codes          |
+| `METRIC_DURATION`        | `http_server_request_duration_seconds` | Primary request duration metric name      |
+| `SERVICE_TYPE_OVERRIDES` | —                                      | Force service types: `svc1=db,svc2=cache` |
 
 ### Tuning
 
@@ -146,13 +146,13 @@ All configuration is via environment variables with sensible defaults:
 
 ## API Endpoints
 
-| Endpoint                              | Description                                                           |
-| ------------------------------------- | --------------------------------------------------------------------- |
-| `GET /api/healthz`                    | Health check — returns `200` if Prometheus is reachable, `503` if not |
-| `GET /api/config`                     | Current refresh interval                                              |
-| `GET /api/services/catalog`           | All discovered services with type classification                      |
-| `GET /api/services/metrics?window=5m` | Metrics for all services (raw + normalized)                           |
-| `GET /api/dashboard/state?window=5m`  | Combined catalog + metrics (used by the UI)                           |
+| Endpoint                              | Description                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------ |
+| `GET /api/healthz`                    | Health check — returns `200` if the metrics backend is reachable, `503` if not |
+| `GET /api/config`                     | Current refresh interval                                                       |
+| `GET /api/services/catalog`           | All discovered services with type classification                               |
+| `GET /api/services/metrics?window=5m` | Metrics for all services (raw + normalized)                                    |
+| `GET /api/dashboard/state?window=5m`  | Combined catalog + metrics (used by the UI)                                    |
 
 ---
 
