@@ -256,6 +256,72 @@ function formatSignedPercent(ratio) {
     return `${prefix}${pct.toFixed(1)}%`;
 }
 
+function formatQuerySourceLabel(queryName, fallback) {
+    if (!queryName) return fallback;
+
+    let label = queryName;
+    let isBaseline = false;
+    if (label.endsWith(":baseline")) {
+        label = label.slice(0, -9);
+        isBaseline = true;
+    }
+
+    label = label
+        .replace(/^(app|db|cache|queue|worker)_/, "")
+        .replace(/^(error|latency|traffic|rps|saturation)_/, "")
+        .replace(/_/g, " ")
+        .toUpperCase();
+
+    if (isBaseline) label = `${label} BASELINE`;
+    if (label.length > 34) label = `${label.slice(0, 33)}...`;
+    return label;
+}
+
+function buildBubbleRows(svc) {
+    const genericLabels = {
+        error: "FAIL RATE (5M)",
+        latency: "LATENCY SIGNAL (MS)",
+        traffic: "THROUGHPUT DELTA VS BASELINE",
+        saturation: "LOAD/PRESSURE SIGNAL",
+        type: "INFERRED TYPE",
+    };
+
+    const metricValues = {
+        error: `${(svc.errorRate * 100).toFixed(2)}%`,
+        latency: `${svc.latencyMs.toFixed(0)}ms`,
+        traffic: formatSignedPercent(svc.trafficAnomaly),
+        saturation: `${(svc.saturation * 100).toFixed(0)}%`,
+        type: `${svc.serviceType}`,
+    };
+
+    if (svc.serviceType === "unknown") {
+        return [
+            { label: genericLabels.error, value: metricValues.error },
+            { label: genericLabels.latency, value: metricValues.latency },
+            { label: genericLabels.traffic, value: metricValues.traffic },
+            { label: genericLabels.saturation, value: metricValues.saturation },
+            { label: genericLabels.type, value: metricValues.type },
+        ];
+    }
+
+    const source = svc.source || {};
+    const trafficLabelSource = source.trafficAnomalyQuery || source.trafficCurrentQuery;
+
+    return [
+        { label: formatQuerySourceLabel(source.errorRateQuery, genericLabels.error), value: metricValues.error },
+        { label: formatQuerySourceLabel(source.latencyP95Query, genericLabels.latency), value: metricValues.latency },
+        { label: formatQuerySourceLabel(trafficLabelSource, genericLabels.traffic), value: metricValues.traffic },
+        { label: formatQuerySourceLabel(source.saturationQuery, genericLabels.saturation), value: metricValues.saturation },
+        { label: "SERVICE TYPE", value: metricValues.type },
+    ];
+}
+
+function buildBubbleRowsHTML(svc) {
+    return buildBubbleRows(svc)
+        .map((row) => `<div><span class="label">${row.label}:</span> ${row.value}</div>`)
+        .join("");
+}
+
 async function update() {
     const lastUpdated = document.getElementById("last-updated");
 
@@ -292,6 +358,7 @@ async function update() {
                 name: svc.serviceName,
                 serviceType: svc.serviceType || "unknown",
                 state: svc.state || "active",
+                source: svc.source || {},
                 errorRate: errorRateRaw,
                 latencyMs: latencyP95MsRaw,
                 trafficAnomaly: trafficAnomalyRaw,
@@ -347,7 +414,8 @@ function reconcileNodes(data) {
     }
 
     // 2. Add or Update nodes
-    Object.values(data).forEach(svc => {
+    const services = Object.values(data);
+    services.forEach(svc => {
         let node = physicsState.nodes.get(svc.name);
         
         // Get or Generate Color
@@ -379,11 +447,7 @@ function reconcileNodes(data) {
         
         // Update Stats Text (Labels) + Bubble Text
         const bubbleHTML = `<div class="chat-bubble bubble-v${Math.floor(Math.random() * 4) + 1}">
-            <div><span class="label">ERR:</span> ${(svc.errorRate * 100).toFixed(2)}%</div>
-            <div><span class="label">LAT:</span> ${svc.latencyMs.toFixed(0)}ms</div>
-            <div><span class="label">ANOM:</span> ${formatSignedPercent(svc.trafficAnomaly)}</div>
-            <div><span class="label">SAT:</span> ${(svc.saturation * 100).toFixed(0)}%</div>
-            <div><span class="label">TYPE:</span> ${svc.serviceType}</div>
+            ${buildBubbleRowsHTML(svc)}
         </div>`;
         // Note: we recreate bubble HTML because stats change. 
         // Optimized: only update text inside bubble if needed? 
@@ -429,16 +493,18 @@ function reconcileNodes(data) {
             
             const bubbleEl = node.element.querySelector('.chat-bubble');
             if (bubbleEl) {
-                 bubbleEl.innerHTML = `
-                    <div><span class="label">ERR:</span> ${(svc.errorRate * 100).toFixed(2)}%</div>
-                    <div><span class="label">LAT:</span> ${svc.latencyMs.toFixed(0)}ms</div>
-                    <div><span class="label">ANOM:</span> ${formatSignedPercent(svc.trafficAnomaly)}</div>
-                    <div><span class="label">SAT:</span> ${(svc.saturation * 100).toFixed(0)}%</div>
-                    <div><span class="label">TYPE:</span> ${svc.serviceType}</div>
-                 `;
+                 bubbleEl.innerHTML = buildBubbleRowsHTML(svc);
             }
         }
     });
+
+    // Log all face bubble data in a simple JSON shape.
+    const facesJson = services.map((svc) => ({
+        name: svc.name,
+        serviceType: svc.serviceType,
+        rows: buildBubbleRows(svc),
+    }));
+    console.log(JSON.stringify({ faces: facesJson }));
 
     // Layout only on topology changes; otherwise keep world coordinates stable.
     if (topologyChanged) {

@@ -62,6 +62,13 @@ type QueryDefinition = {
   transform?: (value: number) => number;
 };
 
+type MetricType = "error_rate" | "latency_p95" | "traffic_current" | "traffic_baseline" | "saturation";
+
+type ResolvedMetric = {
+  values: Map<string, number>;
+  sourceQueryName: Map<string, string>;
+};
+
 type ServiceCatalogInternal = {
   serviceName: string;
   namespace: string;
@@ -107,6 +114,14 @@ type ServiceMetricsRecord = {
     latencyNorm: number | null;
     trafficNorm: number | null;
     saturationNorm: number | null;
+  };
+  source: {
+    errorRateQuery: string | null;
+    latencyP95Query: string | null;
+    trafficCurrentQuery: string | null;
+    trafficBaselineQuery: string | null;
+    trafficAnomalyQuery: string | null;
+    saturationQuery: string | null;
   };
   dataQuality: {
     missingMetrics: string[];
@@ -830,26 +845,34 @@ async function getClassificationSnapshot(
 async function resolveFallbackMetric(
   definitions: QueryDefinition[],
   serviceType: ServiceType,
-  metricType: "error_rate" | "latency_p95" | "traffic_current" | "traffic_baseline" | "saturation"
-): Promise<Map<string, number>> {
+  metricType: MetricType
+): Promise<ResolvedMetric> {
   const maps = await Promise.all(
-    definitions.map((definition) =>
-      queryAcrossAliases(definition.query, definition.transform, {
+    definitions.map(async (definition) => ({
+      definition,
+      map: await queryAcrossAliases(definition.query, definition.transform, {
         serviceType,
         metricType,
         queryName: definition.name,
-      })
-    )
+      }),
+    }))
   );
 
   const merged = new Map<string, number>();
-  for (const map of maps) {
-    for (const [serviceName, value] of map) {
-      if (!merged.has(serviceName)) merged.set(serviceName, value);
+  const sourceQueryName = new Map<string, string>();
+  for (const result of maps) {
+    for (const [serviceName, value] of result.map) {
+      if (!merged.has(serviceName)) {
+        merged.set(serviceName, value);
+        sourceQueryName.set(serviceName, result.definition.name);
+      }
     }
   }
 
-  return merged;
+  return {
+    values: merged,
+    sourceQueryName,
+  };
 }
 
 // Wrap a current-value query into a baseline avg_over_time query.
@@ -1393,10 +1416,18 @@ async function fetchTypeMetricMaps(type: ServiceType, window: string): Promise<{
   latencyP95MsRaw: Map<string, number>;
   trafficAnomalyRaw: Map<string, number>;
   saturationRaw: Map<string, number>;
+  source: {
+    errorRateQuery: Map<string, string>;
+    latencyP95Query: Map<string, string>;
+    trafficCurrentQuery: Map<string, string>;
+    trafficBaselineQuery: Map<string, string>;
+    trafficAnomalyQuery: Map<string, string>;
+    saturationQuery: Map<string, string>;
+  };
 }> {
   const defs = getTypeDefinitions(type, window);
 
-  const [errorRateRaw, latencyP95MsRaw, trafficCurrent, trafficBaseline, saturationRaw] = await Promise.all([
+  const [errorRate, latencyP95Ms, trafficCurrent, trafficBaseline, saturation] = await Promise.all([
     resolveFallbackMetric(defs.error, type, "error_rate"),
     resolveFallbackMetric(defs.latencyMs, type, "latency_p95"),
     resolveFallbackMetric(defs.trafficCurrent, type, "traffic_current"),
@@ -1404,13 +1435,33 @@ async function fetchTypeMetricMaps(type: ServiceType, window: string): Promise<{
     resolveFallbackMetric(defs.saturation, type, "saturation"),
   ]);
 
-  const trafficAnomalyRaw = computeTrafficAnomaly(trafficCurrent, trafficBaseline);
+  const trafficAnomalyRaw = computeTrafficAnomaly(trafficCurrent.values, trafficBaseline.values);
+  const trafficAnomalyQuery = new Map<string, string>();
+  for (const serviceName of trafficAnomalyRaw.keys()) {
+    const currentQuery = trafficCurrent.sourceQueryName.get(serviceName);
+    const baselineQuery = trafficBaseline.sourceQueryName.get(serviceName);
+    if (currentQuery && baselineQuery) {
+      trafficAnomalyQuery.set(serviceName, `${currentQuery} vs ${baselineQuery}`);
+    } else if (currentQuery) {
+      trafficAnomalyQuery.set(serviceName, `${currentQuery} vs baseline`);
+    } else if (baselineQuery) {
+      trafficAnomalyQuery.set(serviceName, `current vs ${baselineQuery}`);
+    }
+  }
 
   return {
-    errorRateRaw: clampMetricMap(errorRateRaw, 0),
-    latencyP95MsRaw: clampMetricMap(latencyP95MsRaw, 0),
+    errorRateRaw: clampMetricMap(errorRate.values, 0),
+    latencyP95MsRaw: clampMetricMap(latencyP95Ms.values, 0),
     trafficAnomalyRaw,
-    saturationRaw: clampMetricMap(saturationRaw, 0),
+    saturationRaw: clampMetricMap(saturation.values, 0),
+    source: {
+      errorRateQuery: errorRate.sourceQueryName,
+      latencyP95Query: latencyP95Ms.sourceQueryName,
+      trafficCurrentQuery: trafficCurrent.sourceQueryName,
+      trafficBaselineQuery: trafficBaseline.sourceQueryName,
+      trafficAnomalyQuery,
+      saturationQuery: saturation.sourceQueryName,
+    },
   };
 }
 
@@ -1501,6 +1552,14 @@ async function getServiceMetricsSnapshot(
         latencyP95MsRaw: Map<string, number>;
         trafficAnomalyRaw: Map<string, number>;
         saturationRaw: Map<string, number>;
+        source: {
+          errorRateQuery: Map<string, string>;
+          latencyP95Query: Map<string, string>;
+          trafficCurrentQuery: Map<string, string>;
+          trafficBaselineQuery: Map<string, string>;
+          trafficAnomalyQuery: Map<string, string>;
+          saturationQuery: Map<string, string>;
+        };
       }
     >();
 
@@ -1526,6 +1585,14 @@ async function getServiceMetricsSnapshot(
         latencyP95MsRaw: new Map<string, number>(),
         trafficAnomalyRaw: new Map<string, number>(),
         saturationRaw: new Map<string, number>(),
+        source: {
+          errorRateQuery: new Map<string, string>(),
+          latencyP95Query: new Map<string, string>(),
+          trafficCurrentQuery: new Map<string, string>(),
+          trafficBaselineQuery: new Map<string, string>(),
+          trafficAnomalyQuery: new Map<string, string>(),
+          saturationQuery: new Map<string, string>(),
+        },
       };
 
       const raw = {
@@ -1536,6 +1603,14 @@ async function getServiceMetricsSnapshot(
       };
 
       const normalized = normalizeMetrics(raw);
+      const source = {
+        errorRateQuery: maps.source.errorRateQuery.get(service.serviceName) ?? null,
+        latencyP95Query: maps.source.latencyP95Query.get(service.serviceName) ?? null,
+        trafficCurrentQuery: maps.source.trafficCurrentQuery.get(service.serviceName) ?? null,
+        trafficBaselineQuery: maps.source.trafficBaselineQuery.get(service.serviceName) ?? null,
+        trafficAnomalyQuery: maps.source.trafficAnomalyQuery.get(service.serviceName) ?? null,
+        saturationQuery: maps.source.saturationQuery.get(service.serviceName) ?? null,
+      };
       const dataQuality = mapDataQuality(raw);
 
       return {
@@ -1546,6 +1621,7 @@ async function getServiceMetricsSnapshot(
         capturedAt,
         raw,
         normalized,
+        source,
         dataQuality,
       };
     });
