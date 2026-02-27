@@ -5,7 +5,20 @@ let config = { refreshInterval: 15 };
 const physicsState = {
     nodes: new Map(), // Map<ServiceName, Node>
     bounds: { width: 0, height: 0, centerX: 0, centerY: 0 },
-    zoom: 1
+    camera: {
+        centerX: 0,
+        centerY: 0,
+        zoom: 0,
+        minZoom: -1.5,
+        maxZoom: 2.5,
+        initialized: false,
+    },
+    drag: {
+        active: false,
+        pointerId: null,
+        lastX: 0,
+        lastY: 0,
+    }
 };
 
 // --- Mapping Config ---
@@ -66,6 +79,8 @@ const FORCE_CENTER = 0.002; // Weak Pull to center
 const FORCE_REPEL = 0.2; // Strong Push away
 const DAMPING = 0.9;
 const MAX_VELOCITY = 2; // Slow movement for "standing" feel
+const CARD_WIDTH = 120;
+const CARD_ANCHOR_Y = 75;
 
 // Cached latest service data for re-rendering on mapping change
 let latestServiceData = {};
@@ -80,25 +95,13 @@ async function init() {
     updateBounds();
     window.addEventListener('resize', () => {
         updateBounds();
-        layout();
+        renderNodes(Array.from(physicsState.nodes.values()));
     });
 
-    // Zoom Interaction
+    // Camera Interaction
     const grid = document.getElementById("grid");
     if (grid) {
-        grid.addEventListener("wheel", (e) => {
-            e.preventDefault();
-            const delta = e.deltaY;
-            const sensitivity = 0.001;
-            
-            // Update Zoom
-            let newZoom = physicsState.zoom - delta * sensitivity;
-            newZoom = Math.max(0.1, Math.min(newZoom, 5)); // Clamp 0.1x to 5x
-            physicsState.zoom = newZoom;
-            
-            // Re-render immediately (layout doesn't depend on zoom anymore)
-            renderNodes(Array.from(physicsState.nodes.values()));
-        }, { passive: false });
+        setupCameraInteraction(grid);
     }
 
     // Setup modal & mapping UI
@@ -119,6 +122,127 @@ function updateBounds() {
     // Target center
     physicsState.bounds.centerX = grid.clientWidth / 2;
     physicsState.bounds.centerY = grid.clientHeight / 2 + 100; 
+}
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function getScale() {
+    return Math.pow(2, physicsState.camera.zoom);
+}
+
+function initializeCameraFromNodes(nodes) {
+    if (physicsState.camera.initialized || nodes.length === 0) return;
+
+    let totalX = 0;
+    let totalY = 0;
+    nodes.forEach((node) => {
+        totalX += node.x;
+        totalY += node.y;
+    });
+
+    physicsState.camera.centerX = totalX / nodes.length;
+    physicsState.camera.centerY = totalY / nodes.length;
+    physicsState.camera.zoom = 0;
+    physicsState.camera.initialized = true;
+}
+
+function ensureCameraInitialized() {
+    if (physicsState.camera.initialized) return;
+    const nodes = Array.from(physicsState.nodes.values());
+    if (nodes.length > 0) {
+        initializeCameraFromNodes(nodes);
+        return;
+    }
+    physicsState.camera.centerX = physicsState.bounds.centerX;
+    physicsState.camera.centerY = physicsState.bounds.centerY;
+    physicsState.camera.zoom = 0;
+    physicsState.camera.initialized = true;
+}
+
+function worldToScreen(worldX, worldY) {
+    const { width, height } = physicsState.bounds;
+    const { centerX, centerY } = physicsState.camera;
+    const scale = getScale();
+
+    return {
+        x: (worldX - centerX) * scale + (width / 2),
+        y: (worldY - centerY) * scale + (height / 2),
+    };
+}
+
+function screenToWorld(screenX, screenY) {
+    const { width, height } = physicsState.bounds;
+    const { centerX, centerY } = physicsState.camera;
+    const scale = getScale();
+
+    return {
+        x: centerX + ((screenX - (width / 2)) / scale),
+        y: centerY + ((screenY - (height / 2)) / scale),
+    };
+}
+
+function setupCameraInteraction(grid) {
+    grid.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        ensureCameraInitialized();
+
+        const rect = grid.getBoundingClientRect();
+        const cursorX = e.clientX - rect.left;
+        const cursorY = e.clientY - rect.top;
+        const worldBefore = screenToWorld(cursorX, cursorY);
+
+        const camera = physicsState.camera;
+        const nextZoom = clamp(camera.zoom - e.deltaY * 0.0015, camera.minZoom, camera.maxZoom);
+        if (nextZoom === camera.zoom) return;
+        camera.zoom = nextZoom;
+
+        const newScale = getScale();
+        const { width, height } = physicsState.bounds;
+        camera.centerX = worldBefore.x - ((cursorX - (width / 2)) / newScale);
+        camera.centerY = worldBefore.y - ((cursorY - (height / 2)) / newScale);
+
+        renderNodes(Array.from(physicsState.nodes.values()));
+    }, { passive: false });
+
+    grid.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        ensureCameraInitialized();
+
+        physicsState.drag.active = true;
+        physicsState.drag.pointerId = e.pointerId;
+        physicsState.drag.lastX = e.clientX;
+        physicsState.drag.lastY = e.clientY;
+        grid.classList.add("dragging");
+        grid.setPointerCapture(e.pointerId);
+    });
+
+    grid.addEventListener("pointermove", (e) => {
+        if (!physicsState.drag.active || physicsState.drag.pointerId !== e.pointerId) return;
+
+        const dx = e.clientX - physicsState.drag.lastX;
+        const dy = e.clientY - physicsState.drag.lastY;
+        physicsState.drag.lastX = e.clientX;
+        physicsState.drag.lastY = e.clientY;
+
+        const scale = getScale();
+        physicsState.camera.centerX -= dx / scale;
+        physicsState.camera.centerY -= dy / scale;
+
+        renderNodes(Array.from(physicsState.nodes.values()));
+    });
+
+    const stopDrag = (e) => {
+        if (!physicsState.drag.active || physicsState.drag.pointerId !== e.pointerId) return;
+        physicsState.drag.active = false;
+        physicsState.drag.pointerId = null;
+        grid.classList.remove("dragging");
+        grid.releasePointerCapture(e.pointerId);
+    };
+
+    grid.addEventListener("pointerup", stopDrag);
+    grid.addEventListener("pointercancel", stopDrag);
 }
 
 function clamp01(v) {
@@ -211,11 +335,14 @@ function reconcileNodes(data) {
 
     const incomingNames = new Set(Object.keys(data));
     
+    let topologyChanged = false;
+
     // 1. Remove stale nodes
     for (const [name, node] of physicsState.nodes) {
         if (!incomingNames.has(name)) {
             if (node.element.parentNode) grid.removeChild(node.element);
             physicsState.nodes.delete(name);
+            topologyChanged = true;
         }
     }
 
@@ -294,6 +421,7 @@ function reconcileNodes(data) {
                 bodyColor: bodyColor
             };
             physicsState.nodes.set(svc.name, node);
+            topologyChanged = true;
         } else {
             // Update existing DOM content
             const faceEl = node.element.querySelector('.face');
@@ -312,8 +440,12 @@ function reconcileNodes(data) {
         }
     });
 
-    // Re-run static layout after reconciliation
-    layout();
+    // Layout only on topology changes; otherwise keep world coordinates stable.
+    if (topologyChanged) {
+        layout();
+    } else {
+        renderNodes(Array.from(physicsState.nodes.values()));
+    }
 }
 
 function getTrafficUnrelatedColor() {
@@ -414,11 +546,15 @@ function layout(ticks = 300) {
         });
     }
 
+    initializeCameraFromNodes(nodes);
+
     // Apply final positions
     renderNodes(nodes);
 }
 
 function renderNodes(nodes) {
+    ensureCameraInitialized();
+
     // Sort logic: Higher Y (lower on screen) -> Front -> Higher Z-index
     nodes.sort((a, b) => a.y - b.y);
     
@@ -428,19 +564,12 @@ function renderNodes(nodes) {
             node.element.style.zIndex = index + 10;
         }
 
-        // Center the element on coordinate
-        // Apply Zoom to coordinate system (World -> Screen)
-        const { centerX, centerY } = physicsState.bounds;
-        const distX = node.x - centerX;
-        const distY = node.y - centerY;
-        
-        const screenX = centerX + distX * physicsState.zoom;
-        const screenY = centerY + distY * physicsState.zoom;
+        // Camera projection (World -> Screen)
+        const screen = worldToScreen(node.x, node.y);
+        const drawX = screen.x - (CARD_WIDTH / 2);
+        const drawY = screen.y - CARD_ANCHOR_Y;
 
-        const drawX = screenX - (120 / 2); 
-        const drawY = screenY - (75); // Adjusted anchor (Face center approx)
-        
-        node.element.style.transform = `translate3d(${drawX}px, ${drawY}px, 0) scale(${physicsState.zoom})`;
+        node.element.style.transform = `translate3d(${drawX}px, ${drawY}px, 0)`;
     });
 }
 

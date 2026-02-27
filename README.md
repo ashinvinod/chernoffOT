@@ -1,4 +1,4 @@
-# 🎭 ChernoffOT
+# ChernoffOT
 
 **Real-time service monitoring with Chernoff faces.**
 Spot outages at a glance — happy faces mean healthy services, angry faces mean something's wrong.
