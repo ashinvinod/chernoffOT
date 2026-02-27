@@ -3,26 +3,33 @@
 **Real-time service monitoring with Chernoff faces.**
 Spot outages at a glance — happy faces mean healthy services, angry faces mean something's wrong.
 
-ChernoffOT queries any **Prometheus-compatible** endpoint and turns your services into expressive cartoon faces. No managed services required — a self-hosted instance is all you need.
+ChernoffOT queries any **Prometheus-compatible** endpoint and turns your services into expressive cartoon faces. Point it at your existing Prometheus, Amazon Managed Prometheus, Google Managed Prometheus, Grafana Cloud, or any other PromQL-compatible backend.
+
+> 🚧 **Coming soon: zero-config bundled Prometheus.**
+> [**Join waitlist to get notified→**](https://tally.so/r/442kko)
 
 ---
 
 ## Quick Start
 
-### Docker Compose (Recommended)
-
-Spins up ChernoffOT + a local Prometheus. Nothing else to install.
+### Docker
 
 ```bash
-docker compose up
+docker run \
+  -e PROMETHEUS_URL=https://your-prometheus-endpoint \
+  -p 3000:3000 \
+  ghcr.io/your-org/chernoff
 ```
 
 Open [http://localhost:3000](http://localhost:3000) — you'll see faces for every discovered service.
 
-### Docker (Bring Your Own Prometheus)
+### Docker Compose
+
+Copy the provided `docker-compose.yml`, set `PROMETHEUS_URL` in a `.env` file, then:
 
 ```bash
-docker run -e PROMETHEUS_URL=http://your-prometheus:9090 -p 3000:3000 ghcr.io/your-org/chernoff
+echo 'PROMETHEUS_URL=https://your-prometheus-endpoint' > .env
+docker compose up
 ```
 
 ### From Source
@@ -30,7 +37,7 @@ docker run -e PROMETHEUS_URL=http://your-prometheus:9090 -p 3000:3000 ghcr.io/yo
 ```bash
 git clone https://github.com/your-org/chernoff.git && cd chernoff
 bun install
-PROMETHEUS_URL=http://your-prometheus:9090 bun run dev
+PROMETHEUS_URL=https://your-prometheus-endpoint bun run dev
 ```
 
 > **Prerequisite:** [Bun](https://bun.sh) runtime (`curl -fsSL https://bun.sh/install | bash`)
@@ -53,17 +60,17 @@ Sweat drops appear when a service is critically unhealthy (< 30% health).
 ### Architecture
 
 ```
-Your Services → Prometheus (self-hosted) → ChernoffOT → 🎭 Faces
+Your Services → Prometheus-compatible backend → ChernoffOT → 🎭 Faces
 ```
 
 ChernoffOT auto-discovers your services, classifies them by type (app, database, cache, queue, worker), and fetches type-appropriate metrics via PromQL. No manual service registration required.
 
-### How metrics get into Prometheus
+### How metrics get into your backend
 
-It works by **scraping** your services — pulling from `/metrics` endpoints over your internal network. If you use **OpenTelemetry**, the OTel Collector exports metrics in Prometheus format, which are then scraped automatically.
+ChernoffOT works with any PromQL-compatible endpoint — self-hosted Prometheus, Amazon Managed Prometheus, Google Managed Prometheus, Grafana Cloud, VictoriaMetrics, Thanos, and more. If you use **OpenTelemetry**, the OTel Collector can export metrics in Prometheus format for scraping.
 
 ```
-Your App → OTel Collector → /metrics endpoint → Prometheus → ChernoffOT
+Your App → OTel Collector → /metrics endpoint → Prometheus-compatible backend → ChernoffOT
 ```
 
 ---
@@ -96,7 +103,7 @@ ChernoffOT works with any PromQL-compatible backend. Just point `PROMETHEUS_URL`
 | Azure Monitor Prometheus  | `https://<workspace>.prometheus.monitor.azure.com`                                   | `azure`           |
 | Grafana Cloud             | `https://prometheus-prod-XX.grafana.net/api/prom`                                    | `bearer`          |
 
-These are optional — most teams don't need them. A self-hosted instance (bundled in `docker compose`) handles the typical usecases just fine.
+Set `PROMETHEUS_URL` to any of these endpoints and ChernoffOT will connect automatically. Bearer token and basic auth are also supported via `PROMETHEUS_AUTH`.
 
 ---
 
