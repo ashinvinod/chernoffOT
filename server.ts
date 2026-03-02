@@ -18,6 +18,13 @@ const LABEL_STATUS =
 
 const DISCOVERY_CACHE_MS = parseInt(process.env.DISCOVERY_CACHE_MS || "60000", 10);
 const CLASSIFIER_CACHE_MS = parseInt(process.env.CLASSIFIER_CACHE_MS || "600000", 10);
+const CLASSIFIER_CACHE_MS_WHEN_UNKNOWN_HEAVY = parseInt(
+  process.env.CLASSIFIER_CACHE_MS_WHEN_UNKNOWN_HEAVY || "60000",
+  10
+);
+const CLASSIFIER_UNKNOWN_RATIO_REFRESH_THRESHOLD = Number.parseFloat(
+  process.env.CLASSIFIER_UNKNOWN_RATIO_REFRESH_THRESHOLD || "0.4"
+);
 const METRICS_CACHE_MS = parseInt(process.env.METRICS_CACHE_MS || "15000", 10);
 
 const DISCOVERY_LOOKBACK = process.env.DISCOVERY_LOOKBACK || "1h";
@@ -43,6 +50,16 @@ const SERVER_PORT = Number.parseInt(process.env.PORT || "3000", 10) || 3000;
 
 type ServiceType = "application" | "db" | "cache" | "queue" | "worker" | "unknown";
 type ServiceState = "active" | "missing_recently" | "stale";
+type ServiceCapability =
+  | "http"
+  | "grpc"
+  | "rpc"
+  | "database"
+  | "cache"
+  | "queue"
+  | "worker"
+  | "proxy"
+  | "observability";
 
 type PromVectorItem = {
   metric: Record<string, string>;
@@ -95,6 +112,7 @@ type ClassificationRecord = {
   confidence: number;
   evidence: string[];
   overrideApplied: boolean;
+  capabilities: ServiceCapability[];
 };
 
 type ServiceMetricsRecord = {
@@ -126,6 +144,12 @@ type ServiceMetricsRecord = {
   dataQuality: {
     missingMetrics: string[];
     dataQualityScore: number;
+  };
+  classification: {
+    confidence: number;
+    evidence: string[];
+    overrideApplied: boolean;
+    capabilities: ServiceCapability[];
   };
 };
 
@@ -666,18 +690,98 @@ async function getServiceCatalogSnapshot(force = false): Promise<ServiceCatalogS
 function serviceNameHintScore(serviceName: string, type: Exclude<ServiceType, "unknown">): number {
   const lower = serviceName.toLowerCase();
   const hints: Record<Exclude<ServiceType, "unknown">, string[]> = {
-    application: ["api", "app", "svc", "frontend", "backend"],
-    db: ["db", "postgres", "mysql", "mongo", "sql", "database"],
-    cache: ["cache", "redis", "memcached"],
-    queue: ["queue", "kafka", "rabbit", "nats", "broker"],
-    worker: ["worker", "job", "consumer", "processor", "cron", "scheduler"],
+    application: [
+      "api",
+      "app",
+      "svc",
+      "frontend",
+      "backend",
+      "web",
+      "gateway",
+      "proxy",
+      "checkout",
+      "payment",
+      "shipping",
+      "cart",
+      "catalog",
+      "recommendation",
+      "quote",
+      "email",
+      "ad",
+      "fraud",
+      "accounting",
+      "billing",
+      "auth",
+      "user",
+      "orders",
+    ],
+    db: ["db", "postgres", "mysql", "mongo", "sql", "database", "rds"],
+    cache: ["cache", "redis", "memcached", "valkey"],
+    queue: ["queue", "kafka", "rabbit", "nats", "broker", "mq", "stream"],
+    worker: ["worker", "job", "consumer", "processor", "cron", "scheduler", "async"],
   };
 
   return hints[type].some((token) => lower.includes(token)) ? 1 : 0;
 }
 
+// Derive strong hints from service-name tokens for common production naming patterns.
+function serviceNameStrongHintScore(serviceName: string, type: Exclude<ServiceType, "unknown">): number {
+  const lower = serviceName.toLowerCase();
+  const strongHints: Record<Exclude<ServiceType, "unknown">, string[]> = {
+    application: [
+      "gateway",
+      "frontend",
+      "backend",
+      "api",
+      "proxy",
+      "web",
+      "checkout",
+      "payment",
+      "shipping",
+      "cart",
+      "catalog",
+      "recommendation",
+      "auth",
+      "billing",
+    ],
+    db: ["postgres", "mysql", "mongodb", "cassandra", "database"],
+    cache: ["redis", "memcached", "valkey"],
+    queue: ["kafka", "rabbitmq", "nats", "pulsar", "broker"],
+    worker: ["worker", "consumer", "processor", "scheduler"],
+  };
+  return strongHints[type].some((token) => lower.includes(token)) ? 3 : 0;
+}
+
+// Capabilities inferred from service-name tokens.
+function serviceNameCapabilities(serviceName: string): Set<ServiceCapability> {
+  const lower = serviceName.toLowerCase();
+  const out = new Set<ServiceCapability>();
+
+  if (/(api|web|frontend|backend|gateway|proxy)/.test(lower)) out.add("http");
+  if (/(grpc|rpc)/.test(lower)) {
+    out.add("grpc");
+    out.add("rpc");
+  }
+  if (/(postgres|mysql|mongo|db|sql|database)/.test(lower)) out.add("database");
+  if (/(redis|memcached|valkey|cache)/.test(lower)) out.add("cache");
+  if (/(kafka|rabbit|nats|pulsar|queue|broker|mq)/.test(lower)) out.add("queue");
+  if (/(worker|consumer|processor|scheduler|cron|job|async)/.test(lower)) out.add("worker");
+  if (/(proxy|envoy|nginx|haproxy|traefik)/.test(lower)) out.add("proxy");
+  if (/(otel|collector|jaeger|tempo|loki|prometheus|grafana)/.test(lower)) out.add("observability");
+
+  return out;
+}
+
+function applyTypeCapability(type: ServiceType, capabilities: Set<ServiceCapability>) {
+  if (type === "application") capabilities.add("http");
+  if (type === "db") capabilities.add("database");
+  if (type === "cache") capabilities.add("cache");
+  if (type === "queue") capabilities.add("queue");
+  if (type === "worker") capabilities.add("worker");
+}
+
 // Find services that expose metric families matching a classifier regex.
-async function queryPresenceSet(metricRegex: string, signalType: Exclude<ServiceType, "unknown">): Promise<Set<string>> {
+async function queryPresenceSet(metricRegex: string, signalType: string): Promise<Set<string>> {
   const presenceMap = await queryAcrossAliases(
     (serviceLabel) =>
       `sum by (${serviceLabel}) (count_over_time({${serviceLabel}!="",__name__=~"${metricRegex}"}[${CLASSIFIER_LOOKBACK}]))`,
@@ -696,6 +800,21 @@ async function queryPresenceSet(metricRegex: string, signalType: Exclude<Service
   return out;
 }
 
+// Use type adapters themselves as classifier evidence so inference does not depend
+// solely on broad regex-family scans that may return sparse results in some backends.
+async function queryAdapterPresenceSet(type: Exclude<ServiceType, "unknown">): Promise<Set<string>> {
+  const defs = getTypeDefinitions(type, "5m");
+  const [traffic, latency] = await Promise.all([
+    resolveFallbackMetric(defs.trafficCurrent, type, "traffic_current"),
+    resolveFallbackMetric(defs.latencyMs, type, "latency_p95"),
+  ]);
+
+  const out = new Set<string>();
+  for (const serviceName of traffic.values.keys()) out.add(serviceName);
+  for (const serviceName of latency.values.keys()) out.add(serviceName);
+  return out;
+}
+
 // Classify services by type using metric-family evidence, hints, and overrides.
 async function getClassificationSnapshot(
   catalogSnapshot: ServiceCatalogSnapshot,
@@ -710,16 +829,55 @@ async function getClassificationSnapshot(
     nowMs - classificationCacheAt < CLASSIFIER_CACHE_MS &&
     serviceNames.every((name) => classificationCache.byService.has(name))
   ) {
-    return classificationCache;
+    const ageMs = nowMs - classificationCacheAt;
+    const unknownCount = serviceNames.reduce((acc, name) => {
+      const type = classificationCache!.byService.get(name)?.serviceType || "unknown";
+      return acc + (type === "unknown" ? 1 : 0);
+    }, 0);
+    const unknownRatio = unknownCount / Math.max(serviceNames.length, 1);
+
+    const shouldRefreshEarly =
+      ageMs >= CLASSIFIER_CACHE_MS_WHEN_UNKNOWN_HEAVY &&
+      unknownRatio >= CLASSIFIER_UNKNOWN_RATIO_REFRESH_THRESHOLD;
+
+    if (!shouldRefreshEarly) {
+      return classificationCache;
+    }
   }
 
   try {
-    const [applicationSignals, dbSignals, cacheSignals, queueSignals, workerSignals] = await Promise.all([
-      queryPresenceSet("http_server_.*|http_requests_.*|grpc_server_.*", "application"),
-      queryPresenceSet("postgres_.*|mysql_.*|mongodb_.*|cassandra_.*|db_client_.*", "db"),
-      queryPresenceSet("redis_.*|memcached_.*|cache_.*", "cache"),
-      queryPresenceSet("kafka_.*|rabbitmq_.*|nats_.*|pulsar_.*|queue_.*", "queue"),
-      queryPresenceSet("job_.*|task_.*|celery_.*|sidekiq_.*|worker_.*", "worker"),
+    const [
+      applicationSignals,
+      dbSignals,
+      cacheSignals,
+      queueSignals,
+      workerSignals,
+      applicationAdapterSignals,
+      dbAdapterSignals,
+      cacheAdapterSignals,
+      queueAdapterSignals,
+      workerAdapterSignals,
+      httpSignals,
+      grpcSignals,
+      rpcSignals,
+      proxySignals,
+      observabilitySignals,
+    ] = await Promise.all([
+      queryPresenceSet("http_server_.*|http_requests_.*|grpc_server_.*|rpc_server_.*|rpc_client_.*|envoy_http_.*|nginx_.*", "application"),
+      queryPresenceSet("postgres_.*|postgresql_.*|pg_stat_database_.*|mysql_.*|mongodb_.*|cassandra_.*|db_client_.*|sql_.*", "db"),
+      queryPresenceSet("redis_.*|memcached_.*|valkey_.*|cache_.*", "cache"),
+      queryPresenceSet("kafka_.*|rabbitmq_.*|nats_.*|pulsar_.*|queue_.*|sqs_.*|mq_.*", "queue"),
+      queryPresenceSet("job_.*|task_.*|celery_.*|sidekiq_.*|worker_.*|consumer_.*|processor_.*|cron_.*", "worker"),
+      queryAdapterPresenceSet("application"),
+      queryAdapterPresenceSet("db"),
+      queryAdapterPresenceSet("cache"),
+      queryAdapterPresenceSet("queue"),
+      queryAdapterPresenceSet("worker"),
+      queryPresenceSet("http_server_.*|http_requests_.*|http_request_.*|nginx_.*|envoy_http_.*", "cap_http"),
+      queryPresenceSet("grpc_.*", "cap_grpc"),
+      queryPresenceSet("rpc_server_.*|rpc_client_.*", "cap_rpc"),
+      queryPresenceSet("envoy_.*|nginx_.*|haproxy_.*|traefik_.*", "cap_proxy"),
+      queryPresenceSet("otelcol_.*|jaeger_.*|prometheus_.*|tempo_.*|loki_.*", "cap_observability"),
     ]);
 
     const byService = new Map<string, ClassificationRecord>();
@@ -727,11 +885,14 @@ async function getClassificationSnapshot(
     for (const serviceName of serviceNames) {
       const override = SERVICE_TYPE_OVERRIDES[serviceName];
       if (override) {
+        const capabilities = serviceNameCapabilities(serviceName);
+        applyTypeCapability(override, capabilities);
         byService.set(serviceName, {
           serviceType: override,
           confidence: 1,
           evidence: [`override:${override}`],
           overrideApplied: true,
+          capabilities: Array.from(capabilities).sort(),
         });
         continue;
       }
@@ -745,33 +906,96 @@ async function getClassificationSnapshot(
       };
 
       const evidence: string[] = [];
+      const strongHintByType: Record<Exclude<ServiceType, "unknown">, number> = {
+        application: 0,
+        db: 0,
+        cache: 0,
+        queue: 0,
+        worker: 0,
+      };
+      const capabilities = serviceNameCapabilities(serviceName);
 
       if (applicationSignals.has(serviceName)) {
         scores.application += 5;
         evidence.push("application signal: http/grpc metrics");
+        capabilities.add("http");
+      }
+      if (applicationAdapterSignals.has(serviceName)) {
+        scores.application += 3;
+        evidence.push("application adapter signal: traffic/latency query match");
+        capabilities.add("http");
       }
       if (dbSignals.has(serviceName)) {
         scores.db += 5;
         evidence.push("db signal: database metric families");
+        capabilities.add("database");
+      }
+      if (dbAdapterSignals.has(serviceName)) {
+        scores.db += 3;
+        evidence.push("db adapter signal: traffic/latency query match");
+        capabilities.add("database");
       }
       if (cacheSignals.has(serviceName)) {
         scores.cache += 5;
         evidence.push("cache signal: redis/memcached/cache metrics");
+        capabilities.add("cache");
+      }
+      if (cacheAdapterSignals.has(serviceName)) {
+        scores.cache += 3;
+        evidence.push("cache adapter signal: traffic/latency query match");
+        capabilities.add("cache");
       }
       if (queueSignals.has(serviceName)) {
         scores.queue += 5;
         evidence.push("queue signal: kafka/rabbitmq/queue metrics");
+        capabilities.add("queue");
+      }
+      if (queueAdapterSignals.has(serviceName)) {
+        scores.queue += 3;
+        evidence.push("queue adapter signal: traffic/latency query match");
+        capabilities.add("queue");
       }
       if (workerSignals.has(serviceName)) {
         scores.worker += 5;
         evidence.push("worker signal: job/task/worker metrics");
+        capabilities.add("worker");
+      }
+      if (workerAdapterSignals.has(serviceName)) {
+        scores.worker += 3;
+        evidence.push("worker adapter signal: traffic/latency query match");
+        capabilities.add("worker");
+      }
+
+      if (httpSignals.has(serviceName)) capabilities.add("http");
+      if (grpcSignals.has(serviceName)) capabilities.add("grpc");
+      if (rpcSignals.has(serviceName)) capabilities.add("rpc");
+      if (proxySignals.has(serviceName)) capabilities.add("proxy");
+      if (observabilitySignals.has(serviceName)) capabilities.add("observability");
+
+      if (capabilities.has("http")) {
+        scores.application += 1;
+        evidence.push("capability: http");
+      }
+      if (capabilities.has("grpc")) {
+        scores.application += 1;
+        evidence.push("capability: grpc");
+      }
+      if (capabilities.has("rpc")) {
+        scores.application += 1;
+        evidence.push("capability: rpc");
       }
 
       (Object.keys(scores) as Array<keyof typeof scores>).forEach((type) => {
-        const hint = serviceNameHintScore(serviceName, type);
-        if (hint > 0) {
-          scores[type] += hint;
+        const weak = serviceNameHintScore(serviceName, type);
+        const strong = serviceNameStrongHintScore(serviceName, type);
+        strongHintByType[type] = strong;
+        if (weak > 0) {
+          scores[type] += weak;
           evidence.push(`${type} hint: service name token`);
+        }
+        if (strong > 0) {
+          scores[type] += strong;
+          evidence.push(`${type} strong hint: service name pattern`);
         }
       });
 
@@ -791,16 +1015,20 @@ async function getClassificationSnapshot(
       const [topType, topScore] = ranked[0];
       const secondScore = ranked[1]?.[1] ?? 0;
       const margin = topScore - secondScore;
-      const meetsThreshold = topScore >= 5 && margin >= 3;
+      const meetsThreshold = topScore >= 4 && margin >= 2;
+      const hasStrongTopHint = strongHintByType[topType] >= 3;
+      const allowSoftHintClassification = hasStrongTopHint && topScore >= 3 && margin >= 1;
 
-      const serviceType: ServiceType = meetsThreshold ? topType : "unknown";
+      const serviceType: ServiceType = meetsThreshold || allowSoftHintClassification ? topType : "unknown";
       const confidence = serviceType === "unknown" ? 0 : clamp01(margin / Math.max(topScore, 1));
+      applyTypeCapability(serviceType, capabilities);
 
       byService.set(serviceName, {
         serviceType,
         confidence,
         evidence,
         overrideApplied: false,
+        capabilities: Array.from(capabilities).sort(),
       });
     }
 
@@ -830,6 +1058,7 @@ async function getClassificationSnapshot(
         confidence: 0,
         evidence: ["classification unavailable"],
         overrideApplied: false,
+        capabilities: Array.from(serviceNameCapabilities(serviceName)).sort(),
       });
     }
 
@@ -1401,13 +1630,144 @@ function getWorkerDefinitions(window: string): {
   };
 }
 
+// PromQL templates for common platform/control-plane services.
+function getObservabilityDefinitions(window: string): {
+  error: QueryDefinition[];
+  latencyMs: QueryDefinition[];
+  trafficCurrent: QueryDefinition[];
+  saturation: QueryDefinition[];
+} {
+  return {
+    error: [
+      {
+        name: "obs_error_otel_exporter_failed_spans",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(otelcol_exporter_send_failed_spans{${serviceLabel}!=""}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(otelcol_exporter_sent_spans{${serviceLabel}!=""}[${window}])), 0.000001)`,
+      },
+      {
+        name: "obs_error_otel_exporter_failed_metrics",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(otelcol_exporter_send_failed_metric_points{${serviceLabel}!=""}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(otelcol_exporter_sent_metric_points{${serviceLabel}!=""}[${window}])), 0.000001)`,
+      },
+      {
+        name: "obs_error_jaeger_dropped_spans",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(jaeger_collector_spans_dropped_total{${serviceLabel}!=""}[${window}])) / clamp_min(sum by (${serviceLabel}) (rate(jaeger_collector_spans_received_total{${serviceLabel}!=""}[${window}])), 0.000001)`,
+      },
+    ],
+    latencyMs: [
+      {
+        name: "obs_latency_otel_exporter_queue",
+        query: (serviceLabel) =>
+          `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(otelcol_exporter_queue_latency_bucket{${serviceLabel}!=""}[${window}])))`,
+        transform: (v) => v * 1000,
+      },
+      {
+        name: "obs_latency_jaeger_write",
+        query: (serviceLabel) =>
+          `histogram_quantile(0.95, sum by (le, ${serviceLabel}) (rate(jaeger_collector_save_latency_bucket{${serviceLabel}!=""}[${window}])))`,
+        transform: (v) => v * 1000,
+      },
+    ],
+    trafficCurrent: [
+      {
+        name: "obs_traffic_otel_accepted_spans",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(otelcol_receiver_accepted_spans{${serviceLabel}!=""}[${window}]))`,
+      },
+      {
+        name: "obs_traffic_otel_accepted_metric_points",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(otelcol_receiver_accepted_metric_points{${serviceLabel}!=""}[${window}]))`,
+      },
+      {
+        name: "obs_traffic_jaeger_received_spans",
+        query: (serviceLabel) =>
+          `sum by (${serviceLabel}) (rate(jaeger_collector_spans_received_total{${serviceLabel}!=""}[${window}]))`,
+      },
+    ],
+    saturation: [
+      {
+        name: "obs_saturation_otel_exporter_queue",
+        query: (serviceLabel) =>
+          `max by (${serviceLabel}) (otelcol_exporter_queue_size{${serviceLabel}!=""} / clamp_min(otelcol_exporter_queue_capacity{${serviceLabel}!=""}, 1))`,
+      },
+      {
+        name: "obs_saturation_otel_processor_refused",
+        query: (serviceLabel) =>
+          `max by (${serviceLabel}) (rate(otelcol_processor_refused_spans{${serviceLabel}!=""}[${window}]))`,
+      },
+      {
+        name: "obs_saturation_jaeger_queue",
+        query: (serviceLabel) =>
+          `max by (${serviceLabel}) (jaeger_collector_queue_length{${serviceLabel}!=""} / 10000)`,
+      },
+    ],
+  };
+}
+
+// Remove duplicate query definitions while preserving order.
+function dedupeDefinitions(defs: QueryDefinition[]): QueryDefinition[] {
+  const seen = new Set<string>();
+  const out: QueryDefinition[] = [];
+  for (const d of defs) {
+    if (seen.has(d.name)) continue;
+    seen.add(d.name);
+    out.push(d);
+  }
+  return out;
+}
+
 // Dispatch to type-specific query templates.
 function getTypeDefinitions(type: ServiceType, window: string) {
-  if (type === "application" || type === "unknown") return getApplicationDefinitions(window);
+  if (type === "application") return getApplicationDefinitions(window);
   if (type === "db") return getDbDefinitions(window);
   if (type === "cache") return getCacheDefinitions(window);
   if (type === "queue") return getQueueDefinitions(window);
-  return getWorkerDefinitions(window);
+  if (type === "worker") return getWorkerDefinitions(window);
+
+  // Unknown services use broad templates to maximize signal coverage.
+  const app = getApplicationDefinitions(window);
+  const db = getDbDefinitions(window);
+  const cache = getCacheDefinitions(window);
+  const queue = getQueueDefinitions(window);
+  const worker = getWorkerDefinitions(window);
+  const observability = getObservabilityDefinitions(window);
+
+  return {
+    error: dedupeDefinitions([
+      ...app.error,
+      ...queue.error,
+      ...worker.error,
+      ...db.error,
+      ...cache.error,
+      ...observability.error,
+    ]),
+    latencyMs: dedupeDefinitions([
+      ...app.latencyMs,
+      ...queue.latencyMs,
+      ...worker.latencyMs,
+      ...db.latencyMs,
+      ...cache.latencyMs,
+      ...observability.latencyMs,
+    ]),
+    trafficCurrent: dedupeDefinitions([
+      ...app.trafficCurrent,
+      ...queue.trafficCurrent,
+      ...worker.trafficCurrent,
+      ...db.trafficCurrent,
+      ...cache.trafficCurrent,
+      ...observability.trafficCurrent,
+    ]),
+    saturation: dedupeDefinitions([
+      ...app.saturation,
+      ...queue.saturation,
+      ...worker.saturation,
+      ...db.saturation,
+      ...cache.saturation,
+      ...observability.saturation,
+    ]),
+  };
 }
 
 // Fetch raw error/latency/traffic/saturation maps for a given service type.
@@ -1578,6 +1938,10 @@ async function getServiceMetricsSnapshot(
     const services: ServiceMetricsRecord[] = catalog.services.map((service) => {
       const classification = classifications.byService.get(service.serviceName) || {
         serviceType: "unknown" as ServiceType,
+        confidence: 0,
+        evidence: ["classification unavailable"],
+        overrideApplied: false,
+        capabilities: Array.from(serviceNameCapabilities(service.serviceName)).sort(),
       };
 
       const maps = typeMaps.get(classification.serviceType) || {
@@ -1623,6 +1987,12 @@ async function getServiceMetricsSnapshot(
         normalized,
         source,
         dataQuality,
+        classification: {
+          confidence: classification.confidence,
+          evidence: classification.evidence,
+          overrideApplied: classification.overrideApplied,
+          capabilities: classification.capabilities,
+        },
       };
     });
 
@@ -1734,6 +2104,7 @@ const server = serve({
           confidence: 0,
           evidence: ["classification unavailable"],
           overrideApplied: false,
+          capabilities: Array.from(serviceNameCapabilities(s.serviceName)).sort(),
         };
 
         return {
@@ -1742,6 +2113,7 @@ const server = serve({
           confidence: c.confidence,
           evidence: c.evidence,
           overrideApplied: c.overrideApplied,
+          capabilities: c.capabilities,
         };
       });
 
@@ -1782,6 +2154,7 @@ const server = serve({
           confidence: 0,
           evidence: ["classification unavailable"],
           overrideApplied: false,
+          capabilities: Array.from(serviceNameCapabilities(s.serviceName)).sort(),
         };
 
         return {
@@ -1790,6 +2163,7 @@ const server = serve({
           confidence: c.confidence,
           evidence: c.evidence,
           overrideApplied: c.overrideApplied,
+          capabilities: c.capabilities,
         };
       });
 

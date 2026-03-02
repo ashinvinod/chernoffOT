@@ -256,6 +256,21 @@ function formatSignedPercent(ratio) {
     return `${prefix}${pct.toFixed(1)}%`;
 }
 
+function formatNullablePercent(ratio, digits = 2) {
+    if (ratio == null || !Number.isFinite(ratio)) return "N/A";
+    return `${(ratio * 100).toFixed(digits)}%`;
+}
+
+function formatNullableMs(value) {
+    if (value == null || !Number.isFinite(value)) return "N/A";
+    return `${value.toFixed(0)}ms`;
+}
+
+function formatNullableSignedPercent(ratio) {
+    if (ratio == null || !Number.isFinite(ratio)) return "N/A";
+    return formatSignedPercent(ratio);
+}
+
 function formatQuerySourceLabel(queryName, fallback) {
     if (!queryName) return fallback;
 
@@ -267,7 +282,7 @@ function formatQuerySourceLabel(queryName, fallback) {
     }
 
     label = label
-        .replace(/^(app|db|cache|queue|worker)_/, "")
+        .replace(/^(app|db|cache|queue|worker|obs)_/, "")
         .replace(/^(error|latency|traffic|rps|saturation)_/, "")
         .replace(/_/g, " ")
         .toUpperCase();
@@ -287,10 +302,10 @@ function buildBubbleRows(svc) {
     };
 
     const metricValues = {
-        error: `${(svc.errorRate * 100).toFixed(2)}%`,
-        latency: `${svc.latencyMs.toFixed(0)}ms`,
-        traffic: formatSignedPercent(svc.trafficAnomaly),
-        saturation: `${(svc.saturation * 100).toFixed(0)}%`,
+        error: formatNullablePercent(svc.errorRate, 2),
+        latency: formatNullableMs(svc.latencyMs),
+        traffic: formatNullableSignedPercent(svc.trafficAnomaly),
+        saturation: formatNullablePercent(svc.saturation, 0),
         type: `${svc.serviceType}`,
     };
 
@@ -349,24 +364,40 @@ async function update() {
             const raw = svc.raw || {};
             const normalized = svc.normalized || {};
 
-            const errorRateRaw = raw.errorRateRaw ?? 0;
-            const latencyP95MsRaw = raw.latencyP95MsRaw ?? 0;
-            const trafficAnomalyRaw = raw.trafficAnomalyRaw ?? 0;
-            const saturationRaw = raw.saturationRaw ?? 0;
+            const errorRateRaw = raw.errorRateRaw ?? null;
+            const latencyP95MsRaw = raw.latencyP95MsRaw ?? null;
+            const trafficAnomalyRaw = raw.trafficAnomalyRaw ?? null;
+            const saturationRaw = raw.saturationRaw ?? null;
+            const hasAnyMissingData =
+                errorRateRaw == null ||
+                latencyP95MsRaw == null ||
+                trafficAnomalyRaw == null ||
+                saturationRaw == null;
+            const inferredType = svc.serviceType || "unknown";
+            const allMetricsMissing =
+                errorRateRaw == null &&
+                latencyP95MsRaw == null &&
+                trafficAnomalyRaw == null &&
+                saturationRaw == null;
+            const useNoDataVisual =
+                inferredType === "unknown" &&
+                allMetricsMissing;
 
             data[svc.serviceName] = {
                 name: svc.serviceName,
-                serviceType: svc.serviceType || "unknown",
+                serviceType: inferredType,
                 state: svc.state || "active",
                 source: svc.source || {},
+                hasMissingData: hasAnyMissingData,
+                useNoDataVisual,
                 errorRate: errorRateRaw,
                 latencyMs: latencyP95MsRaw,
                 trafficAnomaly: trafficAnomalyRaw,
                 saturation: saturationRaw,
-                errorNorm: normalized.errorRateNorm ?? clamp01(Math.log10(errorRateRaw * 1000 + 1) / 2),
-                latencyNorm: normalized.latencyNorm ?? clamp01(Math.log10(latencyP95MsRaw + 1) / 3),
-                trafficNorm: normalized.trafficNorm ?? clamp01(Math.abs(trafficAnomalyRaw) / 2),
-                saturationNorm: normalized.saturationNorm ?? clamp01(saturationRaw)
+                errorNorm: normalized.errorRateNorm ?? (errorRateRaw == null ? 0.5 : clamp01(Math.log10(errorRateRaw * 1000 + 1) / 2)),
+                latencyNorm: normalized.latencyNorm ?? (latencyP95MsRaw == null ? 0.5 : clamp01(Math.log10(latencyP95MsRaw + 1) / 3)),
+                trafficNorm: normalized.trafficNorm ?? (trafficAnomalyRaw == null ? 0.5 : clamp01(Math.abs(trafficAnomalyRaw) / 2)),
+                saturationNorm: normalized.saturationNorm ?? (saturationRaw == null ? 0.5 : clamp01(saturationRaw))
             };
         });
 
@@ -442,8 +473,16 @@ function reconcileNodes(data) {
         const healthMetricScore = scores[featureMapping.health] ?? 0;
         // Health is composite: dominant metric at 80%, others contribute small amounts
         const health = 1 - Math.max(healthMetricScore * 0.8, mouthScore * 0.15, eyeSize * 0.15);
+        const renderBodyColor = svc.useNoDataVisual ? "#9ca3af" : bodyColor;
 
-        const svgContent = renderFace({ mouth, eyeSize, browAngle, health, bodyColor });
+        const svgContent = renderFace({
+            mouth,
+            eyeSize,
+            browAngle,
+            health,
+            bodyColor: renderBodyColor,
+            missingData: svc.useNoDataVisual,
+        });
         
         // Update Stats Text (Labels) + Bubble Text
         const bubbleHTML = `<div class="chat-bubble bubble-v${Math.floor(Math.random() * 4) + 1}">

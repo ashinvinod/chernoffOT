@@ -7,6 +7,7 @@
  * @param {number} params.eyeSize - 0 = slitted, 1 = popped
  * @param {number} params.browAngle - 0 = angry, 1 = chill
  * @param {number} params.health - 0 = critical, 1 = healthy
+ * @param {boolean} params.missingData - render as unknown/no-data visual state
  * @returns {string} SVG string
  */
 export function renderFace({
@@ -14,7 +15,8 @@ export function renderFace({
   eyeSize = 0,
   browAngle = 1,
   health = 1,
-  bodyColor = "#3b82f6" // Default Blue
+  bodyColor = "#3b82f6", // Default Blue
+  missingData = false
 }) {
   const VIEWBOX_WIDTH = 200;
   const VIEWBOX_HEIGHT = 240; // Reduced height (was 320)
@@ -23,7 +25,9 @@ export function renderFace({
 
   // --- Comic Colors ---
   let fill;
-  if (health > 0.66) {
+  if (missingData) {
+      fill = "#d1d5db";
+  } else if (health > 0.66) {
       fill = "#4ade80"; // Comic Green
   } else if (health > 0.33) {
       fill = "#facc15"; // Comic Yellow
@@ -58,11 +62,28 @@ export function renderFace({
 
   // Sweat Drop (if low health) - Adjusted position
   let extras = "";
-  if (health < 0.3) {
+  if (!missingData && health < 0.3) {
       extras += `
         <path d="M ${CENTER_X + 60} ${HEAD_CY - 50} Q ${CENTER_X + 50} ${HEAD_CY - 60} ${CENTER_X + 60} ${HEAD_CY - 70} Q ${CENTER_X + 70} ${HEAD_CY - 60} ${CENTER_X + 60} ${HEAD_CY - 50} Z" fill="#60a5fa" stroke="black" stroke-width="3" />
         <path d="M ${CENTER_X - 60} ${HEAD_CY - 40} Q ${CENTER_X - 70} ${HEAD_CY - 50} ${CENTER_X - 60} ${HEAD_CY - 60} Q ${CENTER_X - 50} ${HEAD_CY - 50} ${CENTER_X - 60} ${HEAD_CY - 40} Z" fill="#60a5fa" stroke="black" stroke-width="3" />
       `;
+  }
+
+  let eyesMarkup = `
+      <!-- Left -->
+      <ellipse cx="75" cy="${eyeY}" rx="${eyeRadiusX}" ry="${eyeRadiusY}" fill="white" stroke="${strokeColor}" stroke-width="4" />
+      <circle cx="75" cy="${eyeY}" r="${pupilRadius}" fill="black" />
+      
+      <!-- Right -->
+      <ellipse cx="125" cy="${eyeY}" rx="${eyeRadiusX}" ry="${eyeRadiusY}" fill="white" stroke="${strokeColor}" stroke-width="4" />
+      <circle cx="125" cy="${eyeY}" r="${pupilRadius}" fill="black" />
+  `;
+
+  if (missingData) {
+    eyesMarkup = `
+      <path d="M 61 ${eyeY} Q 75 ${eyeY + 8} 89 ${eyeY}" stroke="${strokeColor}" stroke-width="6" fill="none" stroke-linecap="round" />
+      <path d="M 111 ${eyeY} Q 125 ${eyeY + 8} 139 ${eyeY}" stroke="${strokeColor}" stroke-width="6" fill="none" stroke-linecap="round" />
+    `;
   }
 
   return `
@@ -123,13 +144,7 @@ export function renderFace({
             stroke="${strokeColor}" stroke-width="${strokeWidth+2}" fill="none" stroke-linecap="round" />
 
       <!-- Eyes -->
-      <!-- Left -->
-      <ellipse cx="75" cy="${eyeY}" rx="${eyeRadiusX}" ry="${eyeRadiusY}" fill="white" stroke="${strokeColor}" stroke-width="4" />
-      <circle cx="75" cy="${eyeY}" r="${pupilRadius}" fill="black" />
-      
-      <!-- Right -->
-      <ellipse cx="125" cy="${eyeY}" rx="${eyeRadiusX}" ry="${eyeRadiusY}" fill="white" stroke="${strokeColor}" stroke-width="4" />
-      <circle cx="125" cy="${eyeY}" r="${pupilRadius}" fill="black" />
+      ${eyesMarkup}
 
       <!-- Nose -->
       <path d="M ${CENTER_X} ${HEAD_CY + 5} L ${CENTER_X - 10} ${HEAD_CY + 25} L ${CENTER_X + 5} ${HEAD_CY + 20}" stroke="${strokeColor}" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
