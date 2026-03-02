@@ -23,6 +23,7 @@ const physicsState = {
 
 // --- Mapping Config ---
 const STORAGE_KEY = "chernoffOT_mapping";
+const UI_PREFS_KEY = "chernoffOT_ui_prefs";
 
 const METRICS = [
     { id: "errorNorm",      label: "Error Rate" },
@@ -40,8 +41,13 @@ const DEFAULT_MAPPING = {
     health:   "saturationNorm",
 };
 
+const DEFAULT_UI_PREFS = {
+    hideNoDataFaces: false,
+};
+
 // Active mapping (loaded from localStorage or defaults)
 let featureMapping = loadMapping();
+let uiPrefs = loadUiPrefs();
 
 function loadMapping() {
     try {
@@ -68,6 +74,30 @@ function saveMapping() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(featureMapping));
     } catch (e) {
         console.warn("Failed to save mapping to localStorage", e);
+    }
+}
+
+function loadUiPrefs() {
+    try {
+        const raw = localStorage.getItem(UI_PREFS_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            return {
+                ...DEFAULT_UI_PREFS,
+                hideNoDataFaces: parsed?.hideNoDataFaces === true,
+            };
+        }
+    } catch (e) {
+        console.warn("Failed to load UI prefs from localStorage", e);
+    }
+    return { ...DEFAULT_UI_PREFS };
+}
+
+function saveUiPrefs() {
+    try {
+        localStorage.setItem(UI_PREFS_KEY, JSON.stringify(uiPrefs));
+    } catch (e) {
+        console.warn("Failed to save UI prefs to localStorage", e);
     }
 }
 
@@ -394,10 +424,10 @@ async function update() {
                 latencyMs: latencyP95MsRaw,
                 trafficAnomaly: trafficAnomalyRaw,
                 saturation: saturationRaw,
-                errorNorm: normalized.errorRateNorm ?? (errorRateRaw == null ? 0.5 : clamp01(Math.log10(errorRateRaw * 1000 + 1) / 2)),
-                latencyNorm: normalized.latencyNorm ?? (latencyP95MsRaw == null ? 0.5 : clamp01(Math.log10(latencyP95MsRaw + 1) / 3)),
-                trafficNorm: normalized.trafficNorm ?? (trafficAnomalyRaw == null ? 0.5 : clamp01(Math.abs(trafficAnomalyRaw) / 2)),
-                saturationNorm: normalized.saturationNorm ?? (saturationRaw == null ? 0.5 : clamp01(saturationRaw))
+                errorNorm: normalized.errorRateNorm ?? (errorRateRaw == null ? 0 : clamp01(Math.log10(errorRateRaw * 1000 + 1) / 2)),
+                latencyNorm: normalized.latencyNorm ?? (latencyP95MsRaw == null ? 0 : clamp01(Math.log10(latencyP95MsRaw + 1) / 3)),
+                trafficNorm: normalized.trafficNorm ?? (trafficAnomalyRaw == null ? 0 : clamp01(Math.abs(trafficAnomalyRaw) / 2)),
+                saturationNorm: normalized.saturationNorm ?? (saturationRaw == null ? 0 : clamp01(saturationRaw))
             };
         });
 
@@ -431,7 +461,9 @@ function reconcileNodes(data) {
     const loading = grid.querySelector('.loading');
     if (loading) loading.remove();
 
-    const incomingNames = new Set(Object.keys(data));
+    const services = Object.values(data)
+        .filter((svc) => !(uiPrefs.hideNoDataFaces && svc.useNoDataVisual));
+    const incomingNames = new Set(services.map((svc) => svc.name));
     
     let topologyChanged = false;
 
@@ -445,7 +477,6 @@ function reconcileNodes(data) {
     }
 
     // 2. Add or Update nodes
-    const services = Object.values(data);
     services.forEach(svc => {
         let node = physicsState.nodes.get(svc.name);
         
@@ -687,6 +718,7 @@ function setupMappingModal() {
     const helpBtn  = document.getElementById("help-btn");
     const closeBtn = document.getElementById("modal-close");
     const resetBtn = document.getElementById("mapping-reset");
+    const hideNoDataToggle = document.getElementById("toggle-hide-no-data");
 
     if (!overlay || !helpBtn) return;
 
@@ -710,6 +742,17 @@ function setupMappingModal() {
             }
         });
     });
+
+    if (hideNoDataToggle) {
+        hideNoDataToggle.checked = uiPrefs.hideNoDataFaces;
+        hideNoDataToggle.addEventListener("change", () => {
+            uiPrefs.hideNoDataFaces = hideNoDataToggle.checked;
+            saveUiPrefs();
+            if (Object.keys(latestServiceData).length > 0) {
+                reconcileNodes(latestServiceData);
+            }
+        });
+    }
 
     // Open
     helpBtn.addEventListener("click", () => {
@@ -738,12 +781,15 @@ function setupMappingModal() {
     // Reset
     resetBtn.addEventListener("click", () => {
         featureMapping = { ...DEFAULT_MAPPING };
+        uiPrefs = { ...DEFAULT_UI_PREFS };
         saveMapping();
+        saveUiPrefs();
         // Update dropdown selections
         FEATURES.forEach(featureId => {
             const select = document.getElementById(`map-${featureId}`);
             if (select) select.value = featureMapping[featureId];
         });
+        if (hideNoDataToggle) hideNoDataToggle.checked = uiPrefs.hideNoDataFaces;
         // Re-render
         if (Object.keys(latestServiceData).length > 0) {
             reconcileNodes(latestServiceData);

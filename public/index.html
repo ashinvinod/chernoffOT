@@ -43,7 +43,6 @@
                 <!-- Mouth -->
                 <div class="mapping-row">
                     <div class="feature-info">
-                        <span class="feature-icon">👄</span>
                         <div>
                             <strong>Mouth</strong>
                             <span class="feature-hint">😊 Happy → 😟 Sad</span>
@@ -55,7 +54,6 @@
                 <!-- Eye Size -->
                 <div class="mapping-row">
                     <div class="feature-info">
-                        <span class="feature-icon">👁️</span>
                         <div>
                             <strong>Eye Size</strong>
                             <span class="feature-hint">😑 Calm → 😳 Wide</span>
@@ -67,7 +65,6 @@
                 <!-- Brow Angle -->
                 <div class="mapping-row">
                     <div class="feature-info">
-                        <span class="feature-icon">🤨</span>
                         <div>
                             <strong>Brow Angle</strong>
                             <span class="feature-hint">😌 Relaxed → 😠 Angry</span>
@@ -79,13 +76,27 @@
                 <!-- Health (Head Color) -->
                 <div class="mapping-row">
                     <div class="feature-info">
-                        <span class="feature-icon">🟢</span>
                         <div>
                             <strong>Health (Head Color)</strong>
                             <span class="feature-hint">🟢 Healthy → 🔴 Critical</span>
                         </div>
                     </div>
                     <select id="map-health" class="mapping-select"></select>
+                </div>
+
+                <!-- Visibility Filter -->
+                <div class="mapping-row mapping-row-toggle">
+                    <div class="feature-info">
+                        <div>
+                            <strong>Hide Faces Without Data</strong>
+                            <span class="feature-hint">Hides gray faces that have no metrics</span>
+                        </div>
+                    </div>
+                    <label class="mapping-toggle" for="toggle-hide-no-data">
+                        <input id="toggle-hide-no-data" type="checkbox" role="switch" aria-label="Hide faces without data">
+                        <span class="mapping-slider" aria-hidden="true"></span>
+                        <span class="mapping-toggle-state" aria-hidden="true"></span>
+                    </label>
                 </div>
             </div>
 
