@@ -5,6 +5,18 @@ Spot outages at a glance — happy faces mean healthy services, angry faces mean
 
 ChernoffOT queries any **Prometheus-compatible** endpoint and turns your services into expressive cartoon faces. Point it at your existing Prometheus, Amazon Managed Prometheus, Google Managed Prometheus, Grafana Cloud, or any other PromQL-compatible backend.
 
+<p align="center">
+  <img src="public/demo_1.png" alt="All services healthy — green happy faces" width="700">
+  <br>
+  <em>All services healthy</em>
+</p>
+
+<p align="center">
+  <img src="public/demo_2.png" alt="Some services degraded — angry and stressed faces" width="700">
+  <br>
+  <em>Some services degraded</em>
+</p>
+
 ## Quick Start
 
 ### Docker
