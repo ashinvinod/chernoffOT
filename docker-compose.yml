@@ -11,6 +11,3 @@ services:
       #   Grafana Cloud:              https://prometheus-prod-XX.grafana.net/api/prom
       - PROMETHEUS_URL=${PROMETHEUS_URL:?PROMETHEUS_URL must be set to your Prometheus endpoint}
       - REFRESH_INTERVAL=${REFRESH_INTERVAL:-15}
-      # Optional auth — set PROMETHEUS_AUTH=bearer and PROMETHEUS_TOKEN=<token>, etc.
-      # - PROMETHEUS_AUTH=bearer
-      # - PROMETHEUS_TOKEN=

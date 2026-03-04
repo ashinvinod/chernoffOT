@@ -5,20 +5,16 @@ Spot outages at a glance — happy faces mean healthy services, angry faces mean
 
 ChernoffOT queries any **Prometheus-compatible** endpoint and turns your services into expressive cartoon faces. Point it at your existing Prometheus, Amazon Managed Prometheus, Google Managed Prometheus, Grafana Cloud, or any other PromQL-compatible backend.
 
-> 🚧 **Coming soon: zero-config bundled Prometheus.**
-> [**Join waitlist to get notified→**](https://tally.so/r/442kko)
-
----
-
 ## Quick Start
 
 ### Docker
 
 ```bash
+docker build -t chernoffot .
 docker run \
   -e PROMETHEUS_URL=https://your-prometheus-endpoint \
   -p 3000:3000 \
-  ghcr.io/your-org/chernoff
+  chernoffot
 ```
 
 Open [http://localhost:3000](http://localhost:3000) — you'll see faces for every discovered service.
@@ -35,7 +31,6 @@ docker compose up
 ### From Source
 
 ```bash
-git clone https://github.com/your-org/chernoff.git && cd chernoff
 bun install
 PROMETHEUS_URL=https://your-prometheus-endpoint bun run dev
 ```
@@ -46,16 +41,17 @@ PROMETHEUS_URL=https://your-prometheus-endpoint bun run dev
 
 ## How It Works
 
-Each service in your infrastructure becomes a **face**. Facial features encode the four key outage signals:
+Each service in your infrastructure becomes a **face**. By default, facial features encode these four outage signals:
 
-| Feature        | Metric          | Good → Bad               |
+| Feature        | Default Metric  | Good → Bad               |
 | -------------- | --------------- | ------------------------ |
 | **Mouth**      | Error rate      | 😊 Smiling → 😟 Frowning |
 | **Eye Size**   | Latency (p95)   | 😑 Calm → 😳 Wide open   |
 | **Brow Angle** | Traffic anomaly | 😌 Relaxed → 😠 Angry    |
-| **Head Color** | Saturation      | 🟢 Green → 🔴 Red        |
+| **Head Color** | Health score    | 🟢 Green → 🔴 Red        |
 
 Sweat drops appear when a service is critically unhealthy (< 30% health).
+You can remap which normalized metric drives each facial feature from the in-app mapping modal (`?` button in the header).
 
 ### Architecture
 
@@ -65,47 +61,19 @@ Your Services → Prometheus-compatible backend → ChernoffOT → 🎭 Faces
 
 ChernoffOT auto-discovers your services, classifies them by type (app, database, cache, queue, worker), and fetches type-appropriate metrics via PromQL. No manual service registration required.
 
-### How metrics get into your backend
-
-ChernoffOT works with any PromQL-compatible endpoint — self-hosted Prometheus, Amazon Managed Prometheus, Google Managed Prometheus, Grafana Cloud, VictoriaMetrics, Thanos, and more. If you use **OpenTelemetry**, the OTel Collector can export metrics in Prometheus format for scraping.
-
-```
-Your App → OTel Collector → /metrics endpoint → Prometheus-compatible backend → ChernoffOT
-```
-
----
-
-## Deployment
-
-### Kubernetes
-
-```bash
-helm install chernoff oci://ghcr.io/your-org/chernoff-chart
-```
-
-When `prometheus.url` is not set, ChernoffOT auto-discovers common in-cluster endpoints (kube-prometheus-stack, Prometheus Operator, VictoriaMetrics, Thanos, Mimir).
-
-To specify manually:
-
-```bash
-helm install chernoff oci://ghcr.io/your-org/chernoff-chart \
-  --set prometheus.url=http://prometheus-server.monitoring.svc:80
-```
-
-### Already using a managed Prometheus?
-
 ChernoffOT works with any PromQL-compatible backend. Just point `PROMETHEUS_URL` at it:
 
-| Provider                  | `PROMETHEUS_URL`                                                                     | `PROMETHEUS_AUTH` |
-| ------------------------- | ------------------------------------------------------------------------------------ | ----------------- |
-| Amazon Managed Prometheus | `https://aps-workspaces.<region>.amazonaws.com/workspaces/<id>`                      | `sigv4`           |
-| Google Managed Prometheus | `https://monitoring.googleapis.com/v1/projects/<project>/location/global/prometheus` | `gcp`             |
-| Azure Monitor Prometheus  | `https://<workspace>.prometheus.monitor.azure.com`                                   | `azure`           |
-| Grafana Cloud             | `https://prometheus-prod-XX.grafana.net/api/prom`                                    | `bearer`          |
+| Provider                  | `PROMETHEUS_URL`                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| Amazon Managed Prometheus | `https://aps-workspaces.<region>.amazonaws.com/workspaces/<id>`                      |
+| Google Managed Prometheus | `https://monitoring.googleapis.com/v1/projects/<project>/location/global/prometheus` |
+| Azure Monitor Prometheus  | `https://<workspace>.prometheus.monitor.azure.com`                                   |
+| Grafana Cloud             | `https://prometheus-prod-XX.grafana.net/api/prom`                                    |
 
-Set `PROMETHEUS_URL` to any of these endpoints and ChernoffOT will connect automatically. Bearer token and basic auth are also supported via `PROMETHEUS_AUTH`.
+> 🚧 **Coming soon: zero-config bundled Prometheus.**
+> [**Join waitlist to get notified→**](https://tally.so/r/442kko)
 
----
+ChernoffOT currently issues direct requests to `PROMETHEUS_URL` and does not add auth headers or cloud request signing. For secured endpoints, route through an authenticated proxy/gateway and point `PROMETHEUS_URL` to that proxy.
 
 ## Configuration
 
@@ -118,15 +86,6 @@ All configuration is via environment variables with sensible defaults:
 | `PROMETHEUS_URL`   | `http://localhost:9090` | PromQL-compatible endpoint            |
 | `PORT`             | `3000`                  | Port the ChernoffOT server listens on |
 | `REFRESH_INTERVAL` | `15`                    | Dashboard refresh interval in seconds |
-
-### Authentication
-
-| Variable              | Default | Description                                                     |
-| --------------------- | ------- | --------------------------------------------------------------- |
-| `PROMETHEUS_AUTH`     | `none`  | Auth method: `none`, `bearer`, `basic`, `sigv4`, `gcp`, `azure` |
-| `PROMETHEUS_TOKEN`    | —       | Bearer token (when `PROMETHEUS_AUTH=bearer`)                    |
-| `PROMETHEUS_USER`     | —       | Username (when `PROMETHEUS_AUTH=basic`)                         |
-| `PROMETHEUS_PASSWORD` | —       | Password (when `PROMETHEUS_AUTH=basic`)                         |
 
 ### Service Discovery & Labels
 
@@ -148,18 +107,6 @@ All configuration is via environment variables with sensible defaults:
 | `ACTIVE_WINDOW_SEC`    | `300`    | Seconds before a service is considered missing       |
 | `MISSING_RECENTLY_SEC` | `3600`   | Seconds before a missing service is considered stale |
 | `CATALOG_TTL_SEC`      | `604800` | Seconds before a stale service is pruned (7 days)    |
-
----
-
-## API Endpoints
-
-| Endpoint                              | Description                                                                    |
-| ------------------------------------- | ------------------------------------------------------------------------------ |
-| `GET /api/healthz`                    | Health check — returns `200` if the metrics backend is reachable, `503` if not |
-| `GET /api/config`                     | Current refresh interval                                                       |
-| `GET /api/services/catalog`           | All discovered services with type classification                               |
-| `GET /api/services/metrics?window=5m` | Metrics for all services (raw + normalized)                                    |
-| `GET /api/dashboard/state?window=5m`  | Combined catalog + metrics (used by the UI)                                    |
 
 ---
 
@@ -194,7 +141,7 @@ Any backend that speaks PromQL:
 
 - **Runtime:** [Bun](https://bun.sh) — fast JavaScript/TypeScript runtime
 - **Frontend:** Vanilla JS + SVG (no framework, no build step)
-- **Backend:** Single TypeScript file, ~1700 lines
+- **Backend:** Single TypeScript file, ~2200 lines
 - **Dependencies:** Zero runtime dependencies
 - **Container:** Alpine-based, < 100MB image
 
