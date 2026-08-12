@@ -1,3 +1,5 @@
+
+
 # ChernoffOT
 
 **Real-time service monitoring with Chernoff faces.**
@@ -33,7 +35,7 @@ Open [http://localhost:3000](http://localhost:3000) — you'll see faces for eve
 
 ### Docker Compose
 
-Copy the provided `docker-compose.yml`, set `PROMETHEUS_URL` in a `.env` file, then:
+Copy the provided `docker-compose.yml`, set `PROMETHEUS_URL` (and optionally `REFRESH_INTERVAL`) in a `.env` file, then:
 
 ```bash
 echo 'PROMETHEUS_URL=https://your-prometheus-endpoint' > .env
